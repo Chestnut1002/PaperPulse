@@ -49,6 +49,7 @@ monorepo 三端:backend(Spring Boot 4.1,Java 21 目标,com.paperpulse)/ ai-servi
 - 创建项目级 skill:.claude/skills/dev-standard/SKILL.md(随仓库提交)
 - 项目级 skill 提交并推送至 GitHub
 - 合并远程网页端 README 修改(以远程版本为准)
+- 部署 PaperAgent v2.1.4 至 D:\develop\paperagent\(W1 论文调研工具;Q&A 模块 + DeepSeek,key 由用户在 Web 设置页自填;每日推荐暂不启用)
 
 ## 修改文件
 | 文件 | 修改 |
@@ -62,10 +63,12 @@ skill 将两份规范合并为 8 步执行流水线(会话检查 → 项目分�
 ## 遇到问题
 1. github.com:443 被墙,HTTPS push 持续失败(连接超时/重置),但 api.github.com、codeload 可达
 2. 远程出现网页端提交(157dfcf Update README.md),与本地 skill 提交分叉
+3. PaperAgent Release 资产经 gh 直下时网络中断,两个 exe 被截断(大小不足官方一半,运行报 Exec format error)
 
 ## 解决方案
 - 远程地址由 HTTPS 改为 SSH:`git remote set-url origin git@github.com:Chestnut1002/PaperPulse.git`(github.com:22 可达,已有 ed25519 密钥且已绑定账号)
 - `git pull --rebase origin main` 线性合并后推送,无冲突
+- 改用 api.github.com 资产直连接口(curl -L --retry + gh auth token)重下,并用官方 sha256 校验通过
 
 ## 测试结果
 - SSH 认证:`Hi Chestnut1002! You've successfully authenticated`
