@@ -1,0 +1,27 @@
+# Java / Maven
+backend/target/
+*.class
+*.jar
+
+# Python
+__pycache__/
+*.py[cod]
+ai-service/.venv/
+
+# Node / Vite
+node_modules/
+frontend/dist/
+
+# IDE
+.idea/
+.vscode/
+*.iml
+
+# 环境与密钥
+.env
+*.local
+
+# 日志与系统
+*.log
+.DS_Store
+Thumbs.db
