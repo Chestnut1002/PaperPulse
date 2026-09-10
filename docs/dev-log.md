@@ -38,3 +38,39 @@ monorepo 三端:backend(Spring Boot 4.1,Java 21 目标,com.paperpulse)/ ai-servi
 ## 下一步计划
 - REQ-001 用户注册/登录(后端 JWT + MySQL)
 - 路线图 W1:精读相关领域论文与 PaperAgent 源码
+
+# 2026-09-11
+
+## 本次目标
+将用户指定的两份开发规范打包为 dev-standard agent skill(用户级 + 项目级各一份),并解决 GitHub 推送问题。
+
+## 完成内容
+- 创建用户级 skill:C:\Users\ASUS\.claude\skills\dev-standard\SKILL.md(全局可用)
+- 创建项目级 skill:.claude/skills/dev-standard/SKILL.md(随仓库提交)
+- 项目级 skill 提交并推送至 GitHub
+- 合并远程网页端 README 修改(以远程版本为准)
+
+## 修改文件
+| 文件 | 修改 |
+| ---- | ---- |
+| .claude/skills/dev-standard/SKILL.md | 新增(开发规范合并执行版) |
+| docs/dev-log.md | 追加本条目 |
+
+## 技术方案
+skill 将两份规范合并为 8 步执行流水线(会话检查 → 项目分析报告 → 代码修改计划 → 开发流程 → 测试报告 → Code Review → Git 提交说明 → 文档维护/AI 实验记录)。
+
+## 遇到问题
+1. github.com:443 被墙,HTTPS push 持续失败(连接超时/重置),但 api.github.com、codeload 可达
+2. 远程出现网页端提交(157dfcf Update README.md),与本地 skill 提交分叉
+
+## 解决方案
+- 远程地址由 HTTPS 改为 SSH:`git remote set-url origin git@github.com:Chestnut1002/PaperPulse.git`(github.com:22 可达,已有 ed25519 密钥且已绑定账号)
+- `git pull --rebase origin main` 线性合并后推送,无冲突
+
+## 测试结果
+- SSH 认证:`Hi Chestnut1002! You've successfully authenticated`
+- push 成功,main 与 origin/main 完全同步
+
+## 下一步计划
+- REQ-001 用户注册/登录(后端 JWT + MySQL)
+- 路线图 W1:精读相关领域论文与 PaperAgent 源码
