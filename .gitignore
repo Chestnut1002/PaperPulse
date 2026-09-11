@@ -16,6 +16,7 @@ frontend/dist/
 .idea/
 .vscode/
 *.iml
+.jdk/
 
 # 环境与密钥
 .env
@@ -25,3 +26,6 @@ frontend/dist/
 *.log
 .DS_Store
 Thumbs.db
+
+# 私密规划文档(仅本机,不提交)
+docs-plans/

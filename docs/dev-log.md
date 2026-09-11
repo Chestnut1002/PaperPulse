@@ -77,3 +77,36 @@ skill 将两份规范合并为 8 步执行流水线(会话检查 → 项目分�
 ## 下一步计划
 - REQ-001 用户注册/登录(后端 JWT + MySQL)
 - 精读相关领域论文与 PaperAgent 源码
+
+# 2026-09-12
+
+## 本次目标
+将本地参考文档纳入本机目录,并明确公开仓库的内容边界。
+
+## 完成内容
+- 两份 PaperAgent 参考文档(结合方案 / 源码阅读指南)复制到本地 `docs-plans/` 目录
+- `docs-plans/` 加入 .gitignore,不进入任何 Git 仓库
+- 规划关键信息写入 Claude Code 持久记忆(项目目标、PaperAgent 借鉴点、文档位置)
+
+## 修改文件
+| 文件 | 修改 |
+| ---- | ---- |
+| .gitignore | 新增 docs-plans/ 忽略规则 |
+| docs/dev-log.md | 追加本条目 |
+| docs-plans/*(本地,不提交) | 新增本地参考文档副本 |
+
+## 技术方案
+用户决定:本地参考文档只存本机、不进 Git,仓库对外只保留代码与公开文档。本地副本放 docs-plans/ 供开发查阅。
+
+## 遇到问题
+仓库当前为公开状态(visibility: public),本地参考文档不应混入提交。
+
+## 解决方案
+docs-plans/ 走 .gitignore 本地保留;发布前无需历史清理,仓库历史天然干净。
+
+## 测试结果
+- `git status` 确认 docs-plans/ 未被跟踪
+
+## 下一步计划
+- REQ-001 用户注册/登录(后端 JWT + MySQL)
+- 精读相关领域论文与 PaperAgent 源码(按 docs-plans/ 中的阅读指南推进)
