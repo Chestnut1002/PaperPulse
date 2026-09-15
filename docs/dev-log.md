@@ -110,3 +110,43 @@ docs-plans/ 走 .gitignore 本地保留;发布前无需历史清理,仓库历史
 ## 下一步计划
 - REQ-001 用户注册/登录(后端 JWT + MySQL)
 - 路线图 W1:精读相关领域论文与 PaperAgent 源码(按 docs-plans/ 中的阅读指南推进)
+
+# 2026-09-16
+
+## 本次目标
+清除公开仓库中的个人申请相关信息(工作区 + 全部 Git 历史),删除新出现的 Codex 规范文件。
+
+## 完成内容
+- 工作区脱敏:CLAUDE.md 项目目标表述、docs/dev-log.md 三处、.gitignore 注释 → 中性技术描述
+- Git 历史重写:git-filter-repo blob 回调逐文件替换,**8 个提交全部重写**后强制推送
+- 删除 AGENTS.md 与 .agents/(CC Switch 同步生成的 Codex 版规范,含同样信息,用户决定删除)
+- 全历史扫描验证:敏感词命中数为 0;GitHub 公开内容确认已脱敏
+
+## 修改文件
+| 文件 | 修改 |
+| ---- | ---- |
+| CLAUDE.md | 目标表述脱敏 |
+| docs/dev-log.md | 相关措辞脱敏 |
+| .gitignore | 注释脱敏 |
+| AGENTS.md / .agents/ | 删除(未入库) |
+
+## 技术方案
+隐私边界:仓库公开,个人申请信息不得出现在任何入库内容中。工作区用 `scratch/sanitize.py` 正则脱敏(字符类兼容全角/半角);历史用 `git filter-repo --blob-callback`(回调内显式 UTF-8 解码 → 正则替换 → 编码)重写。重写后 origin 会被移除需重新添加,推送用 `--force`。
+
+## 遇到问题
+1. filter-repo 的 `--replace-text` 对中文模式**静默不匹配**,首次重写无效(靠全历史扫描发现)
+2. filter-repo 默认移除 origin 远程地址
+
+## 解决方案
+- 改用 `--blob-callback`:回调内 `decode('utf-8')` → 正则替换 → `encode('utf-8')`,二进制 blob 原样返回
+- 重写后 `git remote add origin ...` 恢复;`git push --force` 推送
+- 用完即从 ai-service venv 卸载 git-filter-repo,保持环境干净
+
+## 测试结果
+- 全历史扫描(8 个提交 × 所有文件):敏感词命中 **0**
+- GitHub API 读取公开 CLAUDE.md:已为脱敏版本
+- 提交历史完整保留(8 个提交,线性)
+
+## 下一步计划
+- **改为"做中学"**:不专门排 Python 学习周,直接从项目第一个可运行模块动手,语法随用随学
+- 第一个目标:ai-service 里跑通一个能调用 LLM 的最小脚本(DeepSeek key 入 .env)
