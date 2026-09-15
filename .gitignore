@@ -32,3 +32,7 @@ docs-plans/
 
 # 学习练习代码(仅本机)
 scratch/
+
+# 本机私有配置(含数据库密码等,不提交)
+backend/src/main/resources/application-local.yml
+backend/src/main/resources/application-local.properties
