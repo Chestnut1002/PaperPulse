@@ -255,3 +255,51 @@ docs-plans/ 走 .gitignore 本地保留;发布前无需历史清理,仓库历史
 - **F3**:登录签发 JWT `POST /api/auth/login`(BCrypt 校验 + 签发 token)
 - **F4**:`JwtAuthenticationFilter` + `GET /api/users/me`,完成鉴权闭环
 - **待确认**:单元/集成测试是否随功能点同步补齐(当前未写,建议接口稳定后统一补)
+
+# 2026-09-16(第四次)
+
+## 本次目标
+完成 REQ-001 的功能点 F3:登录接口,校验凭据并签发 JWT。
+
+## 完成内容
+- 新增 `security` 包:`JwtProperties`(配置绑定)、`JwtService`(签发/校验)
+- 新增 `user.dto.LoginRequest` / `LoginResponse`
+- `UserService` 增加 `authenticate()` 与 `getById()`
+- `AuthController` 增加 `POST /api/auth/login`
+- `BackendApplication` 增加 `@ConfigurationPropertiesScan`
+
+## 修改文件
+| 文件 | 修改 |
+| ---- | ---- |
+| backend/.../security/JwtProperties.java | 新增 |
+| backend/.../security/JwtService.java | 新增 |
+| backend/.../user/dto/LoginRequest.java | 新增 |
+| backend/.../user/dto/LoginResponse.java | 新增 |
+| backend/.../user/UserService.java | 增加 authenticate / getById |
+| backend/.../user/AuthController.java | 增加 login |
+| backend/.../BackendApplication.java | 增加 @ConfigurationPropertiesScan |
+| scripts/kill-port.ps1 | 修复逗号分隔端口参数被拼接的 bug |
+
+## 技术方案
+1. **JWT 三段结构与签名**:前两段(头部、载荷)只是 Base64 编码,任何人都能解开,服务端真正依赖的是第三段 HMAC 签名。因此 token 内不放敏感信息 —— 它保证"未被篡改",不保证"不可见"
+2. **算法自动选择**:密钥为 64 字节(512 位),jjwt 的 `Keys.hmacShaKeyFor` 自动选用其支持的最强算法 HS512(而非 HS256)。密钥过短时 jjwt 会在启动期直接抛异常,把弱密钥问题拦在上线之前
+3. **防用户名枚举(信息层面)**:用户名不存在与密码错误返回**完全相同**的 401 与提示文案,避免攻击者据此确认某个用户名是否已注册
+4. **防用户名枚举(时序层面)**:用户不存在时若直接返回,会因跳过 BCrypt 而快上百倍,攻击者可据响应耗时枚举用户名。方案是在该分支**照样跑一次 BCrypt 比对**(启动时预生成一个 dummy 哈希,避免每次登录重复计算)
+5. **登录接口不做长度/格式校验**:老用户密码规则可能与现行注册规则不同;且提示"密码长度不符"等于泄露密码策略
+
+## 遇到问题
+1. `kill-port.ps1` 新增的 `-Ports` 参数声明为 `int[]`,从 bash 传 `8081,8080` 时逗号被吃掉,拼成 `80818080` 导致 `Get-NetTCPConnection` 参数转换异常
+
+## 解决方案
+1. 参数改声明为 `string[]`,内部展开逗号、按端口范围(1~65535)校验后再转 `int`,兼容 `-Ports 8080,8000` / `-Ports "8080,8000"` / 多参数三种写法
+
+## 测试结果
+验证实例 `BACKEND_PORT=8081` 启动 2.821s,5 项用例全通过:
+- 正确凭据登录 → **200**,返回 `token` / `tokenType=Bearer` / `expiresIn=86400` / `user`(不含密码)
+- 密码错误 → **401** `用户名或密码错误`
+- 用户名不存在 → **401** `用户名或密码错误`(与上条**逐字一致**)
+- JWT 结构解析:头部 `{"alg":"HS512"}`、载荷 `{"sub":"2","username":"alice","iat":...,"exp":...}`;用密钥独立复算签名 → **完全一致**;篡改载荷后签名 → **不再匹配**
+- 时序侧信道:两种失败场景中位耗时 515ms vs 586ms,差异 12.1%(噪声范围内),无法据此区分
+
+## 下一步计划
+- **F4**:`JwtAuthenticationFilter` 解析 `Authorization: Bearer <token>` + `GET /api/users/me`,完成鉴权闭环(解决目前除 `/api/auth/**` 外全站 401 的问题)

@@ -16,8 +16,26 @@
     .\scripts\kill-port.ps1 -Ports 8080,8000,3306
 #>
 param(
-    [int[]]$Ports = @(8080, 8000)
+    # 收 string[] 而非 int[]:兼容 `-Ports 8080,8000`、`-Ports 8080 8000`、`-Ports "8080,8000"`
+    # 三种写法。若直接声明为 int[],某些调用方式(如从 bash 传参)会把逗号吃掉拼成 80808000。
+    [string[]]$Ports = @('8080', '8000')
 )
+
+# 展开逗号分隔写法并转成整数,顺带过滤空值
+$Ports = $Ports |
+    ForEach-Object { $_ -split ',' } |
+    ForEach-Object { $_.Trim() } |
+    Where-Object { $_ -ne '' } |
+    ForEach-Object {
+        $n = 0
+        if ([int]::TryParse($_, [ref]$n) -and $n -ge 1 -and $n -le 65535) { $n }
+        else { Write-Host "[!!] 非法端口:$_" -ForegroundColor Red }
+    }
+
+if ($Ports.Count -eq 0) {
+    Write-Host "没有有效的端口可处理。" -ForegroundColor Red
+    exit 1
+}
 
 # 本文件存为「UTF-8 with BOM」:Windows PowerShell 5.1 在没有 BOM 时会按 GBK 读取,
 # 导致中文被解析成乱码、字符串引号失配、脚本直接语法报错。改动本文件时请保持 BOM。
