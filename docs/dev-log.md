@@ -232,10 +232,14 @@ docs-plans/ 走 .gitignore 本地保留;发布前无需历史清理,仓库历史
 ## 遇到问题
 1. F1 后台启动的 Java 子进程未被 `TaskStop` 一并结束,残留占用 8080,导致用户复跑时报 `Port 8080 was already in use` —— `spring-boot:run` 会 fork 独立 JVM,杀 Maven 外壳不等于杀应用
 2. PowerShell 中 `curl` 是 `Invoke-WebRequest` 的别名,不识别 `-i` 参数,需改用 `curl.exe`
+3. **同一问题在用户终端二次复现**:用户按 Ctrl+C 停止后,Java 子进程(及 Maven 启动器进程)双双残留,再次启动照样报端口占用
+4. **PowerShell 脚本中文乱码导致语法错误**:新增的 `scripts/kill-port.ps1` 以无 BOM 的 UTF-8 保存,Windows PowerShell 5.1 按 GBK 读取,中文字节被解析成乱码并吃掉字符串收尾引号,报 `UnexpectedToken` 而无法运行
 
 ## 解决方案
 1. 用 `netstat -ano | grep :8080` 定位 PID 后 `Stop-Process -Force`;后续验证实例统一改用 `BACKEND_PORT=8081` 起独立端口,不干扰用户正在运行的实例
 2. 文档与提示中统一使用 `curl.exe`
+3. **新增 `scripts/kill-port.ps1`**:按端口查找监听进程并强制结束,默认清理 8080(后端)与 8000(AI 服务),结束后复查端口是否真正释放。用法 `powershell -ExecutionPolicy Bypass -File scripts/kill-port.ps1`
+4. 该脚本改存为 **UTF-8 with BOM**,并在脚本内显式设置 `[Console]::OutputEncoding = UTF8`。**注意:Windows PowerShell 5.1 只认 BOM,后续修改此文件必须保持 BOM,否则会再次语法报错**
 
 ## 测试结果
 验证实例 `BACKEND_PORT=8081` 启动 2.839s,表由 Hibernate 自动创建。7 项用例全通过:
