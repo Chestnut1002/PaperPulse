@@ -1,6 +1,35 @@
 spring:
   application:
     name: paperpulse-backend
+  # 本机私有配置放 application-local.yml(已被 .gitignore 忽略)。
+  # 新克隆的仓库没有这个文件时,Spring 会静默跳过,自动回落到下面的默认值。
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+  datasource:
+    url: ${DB_URL:jdbc:mysql://localhost:3306/paperpulse?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true}
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  jpa:
+    hibernate:
+      # 开发期由实体类自动建表/改表;上线前改为 none 并改用迁移脚本
+      ddl-auto: update
+    # 关掉 Open Session in View,避免把数据库连接拖到视图渲染阶段(反模式)
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+    show-sql: false
 
 server:
-  port: 8080
+  port: ${BACKEND_PORT:8080}
+
+jwt:
+  # 生产环境必须通过环境变量注入,默认值仅供本机开发
+  secret: ${JWT_SECRET:paperpulse-local-dev-secret-key-change-me-in-production-please}
+  # token 有效期(秒),默认 24 小时
+  expiration-seconds: ${JWT_EXPIRATION:86400}
+
+logging:
+  level:
+    com.paperpulse: DEBUG
