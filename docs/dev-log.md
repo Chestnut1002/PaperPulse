@@ -303,3 +303,116 @@ docs-plans/ 走 .gitignore 本地保留;发布前无需历史清理,仓库历史
 
 ## 下一步计划
 - **F4**:`JwtAuthenticationFilter` 解析 `Authorization: Bearer <token>` + `GET /api/users/me`,完成鉴权闭环(解决目前除 `/api/auth/**` 外全站 401 的问题)
+
+---
+
+# 2026-09-16(收尾总结)
+
+> 本节是当日收尾,供下次开工时快速恢复上下文。**建议下次从「四、下次开工怎么开始」读起。**
+
+## 一、今天最大的变化:推进方式转换
+
+项目此前处于"零功能"状态(三端都只有脚手架)。今天把推进方式确定为:
+
+- **由 AI 编写代码,用户负责运行与验收**,不再穿插教学环节
+- **按 REQ 逐个交付**,每个功能点完成后停下等用户验收
+- 每个功能点的技术方案、遇到的问题、解决方案全部记入本日志 —— 供将来回看时查阅
+
+## 二、今天实际完成的东西
+
+**完成了 REQ-001 的 F1 / F2 / F3 三个功能点**(REQ-001 共拆为 6 个功能点,F4~F6 未做)。
+
+| 功能点 | 内容 | 验收状态 |
+| ---- | ---- | ---- |
+| F1 | 后端骨架就绪 + 数据库连通 | ✅ 用户已验证 |
+| F2 | 用户注册 `POST /api/auth/register` | ✅ 用户已验证(自行注册 test1 成功) |
+| F3 | 登录签发 JWT `POST /api/auth/login` | ⚠️ **AI 自测通过,用户尚未验收** |
+
+**代码产出**(backend,共 14 个 Java 文件):
+
+```
+com.paperpulse
+├── BackendApplication.java        增加 @ConfigurationPropertiesScan
+├── config/SecurityConfig.java     BCrypt Bean + 安全策略(无状态、关 CSRF/表单登录、401)
+├── common/
+│   ├── ApiException.java          携带 HTTP 状态码的业务异常
+│   └── GlobalExceptionHandler.java 统一错误响应
+├── security/
+│   ├── JwtProperties.java         绑定 jwt.* 配置
+│   └── JwtService.java            签发 / 校验 JWT(HS512)
+└── user/
+    ├── User.java                  实体,表名 users
+    ├── UserRepository.java
+    ├── UserService.java           注册 / 认证
+    ├── AuthController.java        /api/auth/register、/api/auth/login
+    └── dto/                       RegisterRequest、UserResponse、LoginRequest、LoginResponse
+```
+
+**其他产出**:
+- 建库 `paperpulse`(utf8mb4 / utf8mb4_unicode_ci),`users` 表由 Hibernate 自动生成
+- `scripts/kill-port.ps1` 开发辅助脚本
+- `backend/pom.xml` 补齐 `spring-boot-starter-data-jpa` 与 `jjwt` 0.12.6
+- 配置分层:`application.yml`(可提交)+ `application-local.yml`(本机私有)
+- 文档:`docs/requirements.md` 补进度拆分、`CHANGELOG.md` 补 v0.2.0、`README.md` 补进度与 API 表
+
+**Git 提交**(4 个):
+```
+d892996 feat: add JWT login endpoint
+4a80783 chore: add kill-port helper to clean up orphaned dev server processes
+f0c6397 feat: add user registration with BCrypt and unified error handling
+ac29dc5 chore: add JPA and JWT dependencies with datasource configuration
+```
+
+## 三、今天踩的坑(按价值排序)
+
+**1. YAML 八进制陷阱 —— 密码 `051002` 变成 `20994`**
+不加引号的 `051002` 被 YAML 当作八进制整数解析。现象极具迷惑性:profile 正确激活、配置文件确实加载、报错却是 `Access denied`。
+**结论:凡以 0 开头的数字型字符串(密码、手机号、学号、编号),YAML 里一律加引号。**
+
+**2. Windows 上 `Ctrl+C` 杀不掉开发服务**
+`mvn spring-boot:run` 会 fork 出独立 JVM,`Ctrl+C` 只结束 Maven 外壳,Java 子进程残留继续占用 8080,导致下次启动报 `Port 8080 was already in use`。今天因此卡了两次。
+**结论:用 `scripts/kill-port.ps1` 清理;验证新代码时用 `BACKEND_PORT=8081` 起独立端口,不干扰正在运行的实例。**
+
+**3. PowerShell 5.1 按 GBK 读取无 BOM 的 `.ps1`**
+UTF-8 中文字节变乱码、吃掉字符串收尾引号,脚本直接 `UnexpectedToken` 无法运行。
+**结论:`scripts/kill-port.ps1` 必须保持 UTF-8 with BOM,修改时别弄丢。**
+
+**4. PowerShell 与 bash 的几处不兼容**
+`curl` 是 `Invoke-WebRequest` 别名(要用 `curl.exe`);引号包裹的路径当命令执行必须加调用运算符 `&`;JSON 请求体建议直接用 `Invoke-RestMethod` 免去转义。
+
+**5. 本机 MySQL 与 docker-compose 端口冲突**
+`docker-compose.yml` 把 MySQL 映射到 3306,与本机已在运行的 MySQL 80 服务冲突。今天选择**直接复用本机 MySQL**,未启用 Docker。
+
+**6. 检索数据源已换成 Semantic Scholar + Crossref 降级**
+本机网络不可达 `export.arxiv.org`(arXiv 官方 API),且 Semantic Scholar 免 key 共享池会持续 429。已实现"先试 Semantic Scholar,失败自动降级 Crossref"的链路。**这是 REQ-002 的前置成果,别重复踩。**
+
+## 四、下次开工怎么开始
+
+**第 0 步:确认 F3 验收**
+用户尚未验收 F3。启动后执行:
+
+```powershell
+# 启动(项目根目录)
+mvn -f backend/pom.xml spring-boot:run
+
+# 登录(用 F2 建的账号,密码 secret123)
+Invoke-RestMethod -Uri http://localhost:8080/api/auth/login -Method Post `
+  -ContentType "application/json" `
+  -Body '{"username":"alice","password":"secret123"}'
+```
+预期返回 `token` / `tokenType=Bearer` / `expiresIn=86400` / `user`。
+再故意输错密码,预期 401 `用户名或密码错误`。
+
+**第 1 步:做 F4**
+- 新增 `security/JwtAuthenticationFilter`:从 `Authorization: Bearer <token>` 取出 token,调 `JwtService.parseUserId()` 校验,写入 `SecurityContext`
+- `SecurityConfig` 中挂载该过滤器,放行规则保持 `/api/auth/**` 开放
+- 新增 `GET /api/users/me`:返回当前登录用户 `UserResponse`
+- 验收标准:不带 token → 401;带上登录拿到的 token → 200 且返回对应用户
+
+**环境备忘**
+- MySQL:本机 8.0.46,root 密码见 `backend/src/main/resources/application-local.yml`(不入库)
+- 数据库已有测试账号:`chestnut` / `alice`(密码均为 `secret123`)、`test1`
+- 工具链:JDK 26 编译为 Java 21 字节码、Maven 3.9.16(走阿里云镜像)、Spring Boot 4.1.1 / Hibernate 7.4.5
+- ai-service 有可用的 DeepSeek 调用与论文检索脚本(`ai-service/scripts/`,**尚未纳入 Git**),是 REQ-002 的起点
+
+**待确认事项**:单元/集成测试暂定"接口稳定后统一补"(节奏 A),用户尚未最终确认。
