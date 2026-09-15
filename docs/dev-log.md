@@ -195,3 +195,59 @@ docs-plans/ 走 .gitignore 本地保留;发布前无需历史清理,仓库历史
 - **F2**:用户注册接口 `POST /api/auth/register`(BCrypt 加密 + 参数校验 + 统一错误响应)
 - **F3**:登录签发 JWT `POST /api/auth/login`
 - **F4**:JWT 鉴权过滤器 + 放行规则(解决当前全站 401)
+
+# 2026-09-16(第三次)
+
+## 本次目标
+完成 REQ-001 的功能点 F2:用户注册接口,含 BCrypt 加密、参数校验与统一错误响应。
+
+## 完成内容
+- 新增 `user` 包:`User` 实体、`UserRepository`、`UserService`、`AuthController`
+- 新增 `user.dto`:`RegisterRequest`(校验注解)、`UserResponse`(出参,不含 password)
+- 新增 `common` 包:`ApiException`(携带状态码的业务异常)、`GlobalExceptionHandler`(统一错误响应)
+- 新增 `config.SecurityConfig`:BCryptPasswordEncoder + 放行 `/api/auth/**`
+- 代码组织采用**按功能分包**(`user` / `common` / `config`)而非按层分包,便于后续 paper / recommendation 等模块横向扩展
+
+## 修改文件
+| 文件 | 修改 |
+| ---- | ---- |
+| backend/.../user/User.java | 新增 |
+| backend/.../user/UserRepository.java | 新增 |
+| backend/.../user/UserService.java | 新增 |
+| backend/.../user/AuthController.java | 新增 |
+| backend/.../user/dto/RegisterRequest.java | 新增 |
+| backend/.../user/dto/UserResponse.java | 新增 |
+| backend/.../common/ApiException.java | 新增 |
+| backend/.../common/GlobalExceptionHandler.java | 新增 |
+| backend/.../config/SecurityConfig.java | 新增 |
+
+## 技术方案
+1. **表名 `users`**:`USER` 是 MySQL 保留字,直接用作表名会报语法错误
+2. **实体与出参分离**:`User` 持有 password 字段,若直接序列化实体会把密码哈希返回给客户端;因此定义 `UserResponse` 并只从它出参,从根上杜绝泄露
+3. **BCrypt 随机盐**:同一密码每次哈希结果不同,攻击者无法通过比对密文推断"哪些用户用了同一个密码";strength 默认 10,单次约 50~100ms
+4. **密码长度上限 72**:源于 BCrypt 只取前 72 **字节**(中文 1 字 = 3 字节),超长部分被静默忽略,不如直接拒绝
+5. **错误响应统一形状**:`timestamp / status / error / message`,校验失败额外带 `fieldErrors`,前端只需一套处理逻辑;未预期异常兜底 500 并记日志
+6. **关闭 CSRF / 表单登录 / Basic**:纯 REST + JWT 不使用 Cookie 会话;未认证统一返回 401 而非 302 跳转
+
+## 遇到问题
+1. F1 后台启动的 Java 子进程未被 `TaskStop` 一并结束,残留占用 8080,导致用户复跑时报 `Port 8080 was already in use` —— `spring-boot:run` 会 fork 独立 JVM,杀 Maven 外壳不等于杀应用
+2. PowerShell 中 `curl` 是 `Invoke-WebRequest` 的别名,不识别 `-i` 参数,需改用 `curl.exe`
+
+## 解决方案
+1. 用 `netstat -ano | grep :8080` 定位 PID 后 `Stop-Process -Force`;后续验证实例统一改用 `BACKEND_PORT=8081` 起独立端口,不干扰用户正在运行的实例
+2. 文档与提示中统一使用 `curl.exe`
+
+## 测试结果
+验证实例 `BACKEND_PORT=8081` 启动 2.839s,表由 Hibernate 自动创建。7 项用例全通过:
+- `users` 表自动生成:字段类型、UNIQUE 约束(username/email)均正确
+- 正常注册 → **201**,响应体含 id/username/email/createdAt,**无 password**
+- 用户名重复 → **409** `用户名已被占用`
+- 邮箱重复 → **409** `邮箱已被注册`
+- 三项参数同时非法 → **400**,`fieldErrors` 一次性返回全部 3 条
+- 落库密码为 BCrypt 密文 `$2a$10$...`;同一明文密码的两个账号**密文不同**(随机盐生效)
+- 明文泄露检查:`SELECT COUNT(*) ... LIKE '%secret123%'` → **0**
+
+## 下一步计划
+- **F3**:登录签发 JWT `POST /api/auth/login`(BCrypt 校验 + 签发 token)
+- **F4**:`JwtAuthenticationFilter` + `GET /api/users/me`,完成鉴权闭环
+- **待确认**:单元/集成测试是否随功能点同步补齐(当前未写,建议接口稳定后统一补)
