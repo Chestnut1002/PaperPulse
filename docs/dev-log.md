@@ -827,7 +827,7 @@ REQ-001 的第五个功能点。F1–F4 解决"用户是谁",F5 开始解决"用
 
 ## 完成内容
 
-- 新增 `com.paperpulse.interest` 包:33 个标签的词表 + 用户兴趣的读写
+- 新增 `com.paperpulse.interest` 包:34 个标签的词表 + 用户兴趣的读写
 - 新增 3 个接口:`GET /api/interests`、`GET|PUT /api/users/me/interests`
 - 新增数据表 `user_interest`,含 `(user_id, tag_key)` 唯一约束
 - 新增 **15 条集成测试**,全部通过
@@ -839,7 +839,7 @@ REQ-001 的第五个功能点。F1–F4 解决"用户是谁",F5 开始解决"用
 
 | 文件 | 修改 |
 | ---- | ---- |
-| `main/interest/InterestTag.java` | 新增。词表枚举,33 项 6 分类,含 S2 映射 |
+| `main/interest/InterestTag.java` | 新增。词表枚举,34 项 6 分类,含 S2 映射 |
 | `main/interest/UserInterest.java` | 新增。实体 + 权重区间常量 |
 | `main/interest/UserInterestRepository.java` | 新增。含"先删后插"用的 JPQL 批量删除 |
 | `main/interest/InterestService.java` | 新增。词表 / 读取 / 全量替换 |
@@ -854,7 +854,7 @@ REQ-001 的第五个功能点。F1–F4 解决"用户是谁",F5 开始解决"用
 
 ## 技术方案
 
-### 1. 词表:受控枚举,33 项分 6 类
+### 1. 词表:受控枚举,34 项分 6 类
 
 标签没有做成自由输入,也没有直接照搬 Semantic Scholar 的 `fieldsOfStudy` ——
 后者只有 23 个大类,「Computer Science」是**一个**值。全站都是 CS 论文的项目里,
@@ -930,6 +930,27 @@ Duplicate entry '11-nlp'           for key 'user_interest.uk_user_interest_user_
 
 改成 `Integer` + `@NotNull`,缺字段时报的是"weight 不能为空"。用例 F5-10 覆盖。
 
+### 问题四(文档错误,靠冒烟测试抓出来):标签数写成了 33,实际是 34
+
+集成测试跑完全绿之后,我另外起了一个真实实例(8081,连开发库 `paperpulse`)做冒烟测试,
+把词表的结构打出来看了一眼:
+
+```
+分类数: 6 | 标签总数: 34
+```
+
+而我在 README / CHANGELOG / 设计文档 / 本日志里都写的是 **33**。
+
+**为什么测试抓不到:**F5-1 的断言是 `assertThat(countTags(categories)).isEqualTo(InterestTag.values().length)`
+—— 它拿**枚举自己**当基准,枚举有几个就认几个。这条断言防的是"漏序列化了某一部分",
+**天然防不住写在文档里的数字**。
+
+**教训**:凡是"文档里的数字"和"代码里的常量"并存的地方,两者之间没有约束关系。
+要么让文档引用代码(但 Markdown 做不到),要么接受这一点、并在改动时**用真实输出核对**,
+而不是凭印象写。这次核对的手段就是冒烟测试 —— 这也是它除了"验证能跑通"之外的第二个作用。
+
+六处已全部改正(README 未写数量,不在其中)。
+
 ## 测试结果
 
 ```
@@ -959,6 +980,23 @@ F5 用例按风险分组:
 
 已验证:测试仍只连 `paperpulse_test`,跑完后开发库 `paperpulse` 的用户数据完好;
 整个 F5 测试类耗时 2.7 s(容器复用,不用重启)。
+
+### 另外做了一次冒烟测试(集成测试覆盖不到的一条路径)
+
+测试 profile 用 `ddl-auto: create-drop`,而开发 profile 用 `update` ——
+**"新表能不能被 `update` 正确建出来"这件事,集成测试永远测不到**,因为它的表是删了重建的。
+
+所以在 8081 起了一个真实实例(连开发库 `paperpulse`)走了一遍完整链路:
+
+| 步骤 | 结果 |
+| ---- | ---- |
+| 注册 + 登录 | 201 / 200 |
+| `GET /api/interests` | 6 分类、34 标签、权重 1–5、上限 10 —— **新表自动建出,无需手工迁移** |
+| `PUT` 写入两个标签 | 200,返回按词表顺序排好的列表 |
+| `PUT` 改其中一个权重 | 200 —— **真实实例上同样没触发"先插后删"** |
+| `GET` 读回 | 与写入一致 |
+
+顺带更正了文档里写错的标签数量(见「问题四」)。跑完用 `scripts/kill-port.ps1 -Ports 8081` 回收,`netstat` 复查无残留。
 
 ## 上一节遗留问题的状态
 
