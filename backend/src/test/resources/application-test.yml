@@ -1,0 +1,17 @@
+# 集成测试专用配置(profile: test)。
+#
+# 与开发配置的两处关键差别:
+#   1. 指向独立数据库 paperpulse_test,**绝不碰开发库 paperpulse**
+#   2. ddl-auto: create-drop —— 每次跑测试重建表结构,保证从干净状态开始
+#
+# 数据库口令**不写在这个文件里**(它在仓库里)。测试以 @ActiveProfiles({"test", "local"})
+# 启动,口令由本机私有的 application-local.yml(已 gitignore)提供;新克隆的仓库没有该文件时,
+# Spring 会静默跳过它,回落到 application.yml 的 ${DB_PASSWORD:},用环境变量传入即可。
+#
+# createDatabaseIfNotExist=true 让 MySQL 驱动自己建库,省掉"跑测试前先手工建库"这一步。
+spring:
+  datasource:
+    url: jdbc:mysql://localhost:3306/paperpulse_test?createDatabaseIfNotExist=true&useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+  jpa:
+    hibernate:
+      ddl-auto: create-drop
