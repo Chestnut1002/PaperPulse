@@ -8,7 +8,7 @@
 
 | 需求 | 内容 | 状态 |
 | ---- | ---- | ---- |
-| REQ-001 | 用户注册/登录(JWT),兴趣标签、收藏、阅读历史、论文评分 | 🚧 进行中(注册 / 登录 / 鉴权 / 兴趣标签已完成) |
+| REQ-001 | 用户注册/登录(JWT),兴趣标签、收藏、阅读历史、论文评分 | ✅ 已完成 |
 | REQ-002 | 检索 Agent:自然语言 → 论文检索,返回带来源文献列表 | ⏳ 待开始 |
 | REQ-003 | 论文精读问答:锚点+动态截断 / RAG,回答带引用 | ⏳ 待开始 |
 | REQ-004 | 个性化论文推荐:行为反馈闭环 + 探索位 | ⏳ 待开始 |
@@ -66,14 +66,39 @@ npm install && npm run dev
 
 ## API
 
-| 方法 | 路径 | 说明 | 鉴权 |
-| ---- | ---- | ---- | ---- |
-| POST | `/api/auth/register` | 注册,返回用户信息(不含密码) | 否 |
-| POST | `/api/auth/login` | 登录,返回 JWT | 否 |
-| GET | `/api/users/me` | 返回当前登录用户 | 是,`Authorization: Bearer <token>` |
-| GET | `/api/interests` | 兴趣标签词表,按分类返回,含权重区间与数量上限 | 是 |
-| GET | `/api/users/me/interests` | 当前用户的兴趣标签 + 权重 | 是 |
-| PUT | `/api/users/me/interests` | **全量替换**当前用户的兴趣标签(传空数组即清空) | 是 |
+除注册与登录外,**所有接口都需要** `Authorization: Bearer <token>`。
+`/api/users/me/**` 一律作用于 token 对应的用户,**路径里不出现用户 id**。
+
+### 认证
+
+| 方法 | 路径 | 说明 |
+| ---- | ---- | ---- |
+| POST | `/api/auth/register` | 注册,返回用户信息(不含密码) |
+| POST | `/api/auth/login` | 登录,返回 JWT |
+| GET | `/api/users/me` | 返回当前登录用户 |
+
+### 兴趣标签
+
+| 方法 | 路径 | 说明 |
+| ---- | ---- | ---- |
+| GET | `/api/interests` | 标签词表,按分类返回,含权重区间与数量上限 |
+| GET | `/api/users/me/interests` | 当前用户的标签 + 权重 |
+| PUT | `/api/users/me/interests` | **全量替换**(传空数组即清空) |
+
+### 论文与个人图书馆
+
+| 方法 | 路径 | 说明 |
+| ---- | ---- | ---- |
+| POST | `/api/papers` | 提交论文元数据,**幂等 upsert**,返回本地 id |
+| GET | `/api/users/me/favorites` | 收藏列表,最近收藏的在前 |
+| POST | `/api/users/me/favorites/{paperId}` | 收藏(幂等,重复调用不报错) |
+| DELETE | `/api/users/me/favorites/{paperId}` | 取消收藏,没收藏过返回 404 |
+| GET | `/api/users/me/history?limit=` | 阅读历史,最近读的在前(默认 100,上限 500) |
+| POST | `/api/users/me/history/{paperId}` | 记一次阅读,**次数累加**而非追加记录 |
+| DELETE | `/api/users/me/history` | 清空历史 |
+| GET | `/api/users/me/ratings` | 评分列表 |
+| PUT | `/api/users/me/ratings/{paperId}` | 打分 / 改分,1–5 星 |
+| DELETE | `/api/users/me/ratings/{paperId}` | 取消评分,没评过返回 404 |
 
 错误响应统一为 `{ timestamp, status, error, message }`,参数校验失败时额外带 `fieldErrors`。
 未认证返回 401,格式与上同 —— 前端只需一套解析逻辑。
@@ -96,6 +121,26 @@ curl -s -X PUT http://localhost:8080/api/users/me/interests \
 
 标签 key 从 `GET /api/interests` 取。权重 1–5,一个用户最多 10 个标签
 (上限由接口返回,前端不必硬编码)。
+
+论文与行为数据分两步:先把元数据交给后端换一个**本地 id**,再用这个 id 记行为。
+
+```bash
+# 1. 论文落库,拿到本地 id(同一篇提交多次返回同一个 id)
+PAPER_ID=$(curl -s -X POST http://localhost:8080/api/papers \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"source":"semantic_scholar","externalId":"1706.03762",
+       "title":"Attention Is All You Need","authors":["Ashish Vaswani"],
+       "publicationYear":2017,"venue":"NeurIPS"}' \
+  | python -c "import sys,json;print(json.load(sys.stdin)['id'])")
+
+# 2. 收藏 / 记录阅读 / 打分,都用这个 id
+curl -s -X POST http://localhost:8080/api/users/me/favorites/$PAPER_ID -H "Authorization: Bearer $TOKEN"
+curl -s -X POST http://localhost:8080/api/users/me/history/$PAPER_ID   -H "Authorization: Bearer $TOKEN"
+curl -s -X PUT  http://localhost:8080/api/users/me/ratings/$PAPER_ID \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d '{"score":5}'
+```
+
+论文在用户之间是**共享**的 —— 别人收藏过的论文,你直接用同一个 id 即可,不必再提交一次元数据。
 
 ## 测试
 
@@ -122,6 +167,10 @@ mvn test
 | `AuthorizationApiIntegrationTest` | 受保护接口鉴权:无 token / 签名被篡改 / 已过期 / 用户不存在 |
 | `ErrorHandlingIntegrationTest` | 客户端错误分类:404 / 400 / 405 / 415 不再一律报 500 |
 | `InterestApiIntegrationTest` | 兴趣标签:全量替换语义、改权重时的写入次序、校验先于删数据 |
+| `LibraryApiIntegrationTest` | 论文落库与三类行为:幂等边界、计数而非追加、元数据不被空值擦除、**并发首次提交的冲突恢复** |
+
+当前共 66 条用例。其中 F6-25 专门盯并发:`CyclicBarrier` 对齐八个线程同时提交同一篇新论文,
+断言它们全部成功且收敛到同一个 id —— 这条用例是删不掉的,删掉并发恢复代码它就红。
 
 ## 开发提示
 

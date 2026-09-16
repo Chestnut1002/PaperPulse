@@ -1011,3 +1011,251 @@ F6 与 F5 有一个共同点:都是"用户 × 论文"的关联数据。但 F6 �
 **论文本身不在本地库里**(要等 REQ-002 检索回来才有)。这需要在动手前先定下来:
 是先把论文信息落到本地表(冗余存储,后续离线可用),还是只存外部 ID(轻量,但每次都要回源)。
 这是 F6 的第一个设计决策,不急着写代码。
+
+---
+
+# 2026-09-16(第九次:F6 收藏/阅读历史/评分,REQ-001 完成)
+
+## 本次目标
+
+REQ-001 的最后一个功能点。前面五个功能点建的是"用户是谁"和"用户想要什么",
+F6 处理"用户做了什么" —— 这是 REQ-004 推荐算法的**行为数据底座**。
+
+本次开工前先定了三件事(前两件由用户拍板):
+
+| 决定 | 结论 |
+| ---- | ---- |
+| 论文元数据怎么存 | **落本地库** —— 只存外部 ID 的话 S2 一挂收藏夹就打不开,离线评测也没法复现 |
+| 评分形式 | **1–5 星** —— 与 F5 兴趣权重同一套刻度 |
+| 前端什么时候做 | **等 REQ-001 全部完成再统一做** —— 前端只写一遍,不因接口变动返工 |
+
+## 完成内容
+
+- 新增 `com.paperpulse.paper` 包:论文语料(与用户无关)
+- 新增 `com.paperpulse.library` 包:收藏 / 阅读历史 / 评分
+- 新增 **4 张表**:`paper`、`paper_favorite`、`paper_read_history`、`paper_rating`,各带唯一约束
+- 新增 **10 个接口**
+- 新增 **25 条集成测试**
+- 设计文档 `docs/design/F6-收藏-阅读历史-评分.md`
+- 全量回归 **66/66 通过**(F3=10,F4=9,E=6,F5=15,F6=25,上下文=1),连跑三轮稳定
+- **`pom.xml` 零改动** —— 仍然没有引入任何新依赖
+- 顺手修掉 F5 遗留的一个 Locale 缺陷(见「问题二」)
+
+## 修改文件
+
+| 文件 | 修改 |
+| ---- | ---- |
+| `main/paper/Paper.java` | 新增。论文实体,元数据只增不减 |
+| `main/paper/PaperSource.java` | 新增。来源枚举 |
+| `main/paper/StringListConverter.java` | 新增。作者列表 ⇄ JSON 文本列 |
+| `main/paper/PaperRepository.java` | 新增 |
+| `main/paper/PaperService.java` | 新增。幂等 upsert + 并发冲突恢复 |
+| `main/paper/PaperController.java` | 新增。`POST /api/papers` |
+| `main/paper/dto/PaperInput.java`<br>`main/paper/dto/PaperResponse.java` | 新增 |
+| `main/library/PaperFavorite.java`<br>`main/library/PaperReadHistory.java`<br>`main/library/PaperRating.java` | 新增。三个实体 |
+| `main/library/*Repository.java` | 新增。三个仓储 |
+| `main/library/LibraryService.java` | 新增。三类行为的业务逻辑 |
+| `main/library/LibraryController.java` | 新增。9 个接口 |
+| `main/library/dto/*.java` | 新增。3 个响应 + 1 个请求 |
+| `main/interest/InterestTag.java` | **改**。`key()` 补上 `Locale.ROOT` |
+| `test/support/ApiClient.java` | 改。补带鉴权的 POST / DELETE |
+| `test/support/AbstractIntegrationTest.java` | 改。清表时一并删 4 张新表 |
+| `test/library/LibraryApiIntegrationTest.java` | 新增。F6,25 条 |
+| `docs/design/F6-收藏-阅读历史-评分.md` | 新增。设计文档 |
+| `docs/requirements.md` | F6 → ✅ Done;**REQ-001 → ✅ Done** |
+| `README.md` | API 表补 10 个接口;测试类表补 F6 |
+| `CHANGELOG.md` | 补 F6 条目 |
+
+## 技术方案
+
+### 1. 论文语料与用户行为分成两个包
+
+`Paper` **不属于任何用户** —— 它是公共语料,REQ-002 检索回来之后也会往这里写。
+收藏/历史/评分则是用户私有的行为数据。两者的生命周期不同,所以分成 `paper` 与 `library` 两个包,
+而不是塞进一个"论文相关"的大包。
+
+### 2. 状态 vs 事件 —— 本次最重要的一个区分
+
+| | 收藏 | 评分 | 阅读 |
+| --- | --- | --- | --- |
+| 语义 | 状态 | 状态 | 可重复的行为 |
+| 重复操作 | 幂等,返回已有的 | 覆盖分数 | **计数加一**,时间前移 |
+
+**写反了不会报错,只会慢慢攒出脏数据。** 把收藏当事件记,用户取消再收藏就有两条;
+把阅读当状态记,读十次只算一次。所以三者写法不同,并且各有用例盯着。
+
+### 3. 幂等的边界
+
+同样是"重复操作",两个接口的响应**刻意不同**:
+
+- 重复收藏 → **200**(它已经处于你要的状态了)
+- 清空空历史 → **204**(结果状态一致)
+- 取消没收藏过的 → **404**(根本没有这回事)
+
+分界线是"结果状态是否与意图一致"。这不是吹毛求疵:前端拿着过期的界面点删除,
+回 200 会让它以为删掉了,用户下次刷新发现又冒出来,却不知道哪一步出的问题。
+
+### 4. 并发首次提交同一篇论文
+
+F6 里唯一一处"写错会直接报 500"的地方。
+
+```
+请求 A: SELECT → 没有 → INSERT ✓
+请求 B: SELECT → 没有 → INSERT ✗ Duplicate entry
+```
+
+数据源不在事务里 —— 论文来自外部检索,多用户同时收藏一篇热门论文是**正常使用**,不是异常。
+
+处理:插入放在**独立的 `REQUIRES_NEW` 事务**里,失败就重查。两个细节缺一不可:
+
+1. **必须独立事务。** 同一事务里刷盘失败后 Hibernate 会话已不可用,紧接着的查询会跟着失败。
+2. **不能用 `@Transactional` 注解。** 私有方法上的注解不生效,同类自调用也绕过代理,
+   而且**不会有任何报错**。用 `TransactionTemplate` 显式划定边界没有这个陷阱。
+
+### 5. 路径里不出现用户 id
+
+所有接口挂在 `/api/users/me` 下,用户一律取自 token。写成 `/api/users/{userId}/...` 的话,
+每个方法都要校验"路径上的 id 是不是你自己",漏掉一处就是越权。
+**让这种错误写不出来,比写对更重要。**
+
+## 遇到问题
+
+### 问题一(真问题):并发冲突恢复是必须的,不是防御性代码
+
+原本我把并发处理当作"写得严谨一点",打算先写上、后面再说。实测之后发现它比预想的重要得多。
+
+**实测方法**:八个线程用 `CyclicBarrier` 对齐后同时提交同一篇新论文。
+
+**结果**:日志里出现 **7 条** `Duplicate entry 'SEMANTIC_SCHOLAR-CONCURRENT-001'
+for key 'paper.uk_paper_source_external_id'` —— 八个线程里有七个真的撞上了,
+全部靠恢复代码拿到同一个 id 并成功返回。
+
+**反向验证**:把恢复代码换成直接 `throw ex` 后重跑,**只有 F6-25 这一条失败**,
+报 `ExecutionException: org.springframework.dao.DataIntegrityViolationException:
+Duplicate entry ...`。
+
+八分之七的碰撞率远高于直觉。原因不难想:八个线程被 `CyclicBarrier` 对齐到同一毫秒,
+而"SELECT 到 INSERT"之间的窗口相对这个时间尺度并不窄。
+
+**顺带一个反面决定**:阅读次数 `readCount` 的更新是"读出来 +1 再写回",并发时会丢一次计数,
+**这个没有处理**。理由是严重程度不同 —— 阅读次数是弱信号,少算一次用户看不到任何异常;
+论文冲突会让用户看到 500。同样的问题,不同的处理,是有意的取舍而不是遗漏。
+两处注释里都写明了这一点。
+
+### 问题二(F5 遗留缺陷):`InterestTag.key()` 漏了 Locale
+
+写 `PaperSource.key()` 时我按 F5 日志里自己写下的教训加了 `Locale.ROOT`,
+顺手搜了一下全代码库,发现 **`InterestTag.key()` 本身就是漏的那个** ——
+F5 的日志里我写了"`toUpperCase()` 不带 Locale 是个坑",却只改了排序比较器,没改 `key()`。
+
+后果比排序严重得多:
+
+```java
+INFORMATION_RETRIEVAL.name().toLowerCase()   // 土耳其语环境下
+  → "ınformation_retrieval"                  // 无点的 ı
+```
+
+它和库里存的 `information_retrieval` 对不上,读取时被 `findByKey` 判为"词表里没有这个标签"
+而**静默过滤掉**。用户看不到任何报错,只是已保存的兴趣凭空少了几项 —— 而且
+`INFORMATION_RETRIEVAL`、`REINFORCEMENT_LEARNING`、`MULTIMODAL` 这些名字里都带 `I`。
+
+已改为 `Locale.ROOT`。**这个 bug 只在土耳其语区域的 JVM 上出现**,本机永远复现不了,
+所以它不是"测试没覆盖到",而是"测试不可能覆盖到" —— 只能靠写代码时的一致性来防。
+
+### 问题三(自查):`instanceof` 链
+
+`LibraryService` 里三个列表方法都要"从一批行为行里取出 paperId 再批量查论文",
+我最初写了一个共用的私有方法,里面用 `instanceof` 逐个判断实体类型:
+
+```java
+if (row instanceof PaperFavorite favorite) { return favorite.getPaperId(); }
+if (row instanceof PaperReadHistory entry)  { return entry.getPaperId(); }
+return ((PaperRating) row).getPaperId();
+```
+
+写的时候就别扭。改成每个调用方自己抽 id:
+
+```java
+List<Long> ids = rows.stream().map(PaperFavorite::getPaperId).toList();
+```
+
+三个调用方各多一行,换来的是一个不需要类型判断的版本 —— 而且**新增第四类行为时,
+编译器会提醒你**,而不是让那个强制转换在运行时炸掉。
+
+## 测试结果
+
+```
+Tests run: 66, Failures: 0, Errors: 0, Skipped: 0
+```
+
+| 测试类 | 用例数 | 本次状态 |
+| ---- | ---- | ---- |
+| `AuthApiIntegrationTest`(F3) | 10 | ✅ |
+| `AuthorizationApiIntegrationTest`(F4) | 9 | ✅ |
+| `ErrorHandlingIntegrationTest`(E) | 6 | ✅ |
+| `InterestApiIntegrationTest`(F5) | 15 | ✅ |
+| `LibraryApiIntegrationTest`(F6) | 25 | ✅ 新增 |
+| `BackendApplicationTests` | 1 | ✅ |
+
+**连跑三轮,均为 66/66 通过,退出码 0。**
+
+### 反向验证(证明用例不是陪跑的)
+
+沿用 F5 的做法:故意把实现改错,看是否**恰好**只有对应的用例失败。
+
+| 改坏的地方 | 结果 | 结论 |
+| ---- | ---- | ---- |
+| `applyMetadata` 改成无条件覆盖 | 只有 **F6-6** 失败 | 而 F6-5(检查"新值确实被更新")仍然通过 —— 能区分"用真实数据更新"和"用空值抹掉" |
+| 并发恢复换成直接重抛 | 只有 **F6-25** 失败 | 恢复代码是承重的 |
+
+两处都已恢复,恢复后重跑三轮全绿。
+
+### 冒烟测试(集成测试覆盖不到的路径)
+
+测试 profile 用 `create-drop`,开发 profile 用 `update` —— "新表能不能被 `update`
+正确建出来"只有真实实例能验证。在 8081 起了一个实例连开发库 `paperpulse`:
+
+| 步骤 | 结果 |
+| ---- | ---- |
+| 提交论文 | 200,拿到本地 id = 1 |
+| 重复提交同一篇 | 同一个 id,**复用而非新建** |
+| 收藏 / 读两次 / 打分 | 200 / 200 / readCount=2 / 200 |
+| 读回三个列表 | 各 1 条,论文标题与两位作者正确内嵌 |
+| 取消收藏 / 再取消 | 204 / **404** |
+
+随后直接查库确认(`mysql` 客户端在 `C:\Program Files\MySQL\MySQL Server 8.0\bin\`,
+不在 PATH 里):
+
+```
+paper / paper_favorite / paper_rating / paper_read_history / user_interest / users
+
+paper.uk_paper_source_external_id       = (source,external_id)
+paper_favorite.uk_paper_favorite_user_paper = (user_id,paper_id)
+paper_rating.uk_paper_rating_user_paper     = (user_id,paper_id)
+paper_read_history.uk_paper_read_user_paper = (user_id,paper_id)
+```
+
+**4 张新表全部由 `ddl-auto: update` 自动建出,唯一约束齐全,无需手工迁移。**
+开发库原有用户数据完好。跑完用 `scripts/kill-port.ps1 -Ports 8081` 回收,`netstat` 复查无残留。
+
+## 上一节遗留问题的状态
+
+- `AccessDeniedHandler`(403)未配 —— **仍然未配**,现在依然没有角色概念,不触发
+- 无 CORS 配置 —— **仍然未配**,前端接入时补(现在前端要开始接入了,这条该提上日程)
+
+## 下一步计划
+
+**REQ-001 到此六个功能点全部完成。** 后端已经有了:用户、鉴权、兴趣标签、行为数据。
+
+接下来有两个方向,按依赖关系应该这样排序:
+
+1. **前端**(用户已决定"等 REQ-001 做完再统一做") —— 登录页、兴趣选择器、收藏管理页。
+   现在接口稳定了,前端只写一遍。**顺带必须补 CORS 配置**,否则前端连不上。
+2. **REQ-002 检索 Agent**(Python 侧) —— 让论文真正从 Semantic Scholar 流进来。
+
+推荐先做前端:它是 REQ-001 的收尾,也是第一次能把已完成的东西**演示出来**;
+而且 REQ-002 做完后又会有新的界面需求,分开做比堆在一起容易。
+
+**F6 留给 REQ-002 的一件事**:论文目前由客户端提交元数据,后端不校验它是否真的来自所声称的来源。
+REQ-002 落地后,论文应当由后端自己从 S2 拉取写入,`POST /api/papers` 收窄为只读 ——
+那样这条路径就没有"客户端可抢占 externalId"的问题了。
