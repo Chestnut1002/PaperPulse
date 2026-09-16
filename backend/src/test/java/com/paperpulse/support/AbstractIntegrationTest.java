@@ -57,8 +57,15 @@ public abstract class AbstractIntegrationTest {
 
         // 每个用例从空表开始。用户名在用例之间会重复使用,不清理会互相干扰
         // (比如"用户名不存在应返回 401"被上一个用例建出来的用户破坏)。
-        // 先删从表再删主表 —— 当前没有外键,顺序不影响执行,但保持这个习惯,
-        // 将来真加了外键就不用回来改。
+        //
+        // 顺序有讲究:先删引用别人的表,再删被引用的表。论文尤其重要 ——
+        // 论文表的唯一约束是 (来源, 外部 ID),上个用例留下的论文会让
+        // "首次提交应新建一行"的用例变成"已存在",而且它不是外键,不会自己级联。
+        // 当前没有外键,顺序不影响执行,但保持这个习惯,将来真加了外键就不用回来改。
+        jdbcTemplate.execute("DELETE FROM paper_favorite");
+        jdbcTemplate.execute("DELETE FROM paper_read_history");
+        jdbcTemplate.execute("DELETE FROM paper_rating");
+        jdbcTemplate.execute("DELETE FROM paper");
         jdbcTemplate.execute("DELETE FROM user_interest");
         jdbcTemplate.execute("DELETE FROM users");
     }
