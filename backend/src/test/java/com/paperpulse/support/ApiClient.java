@@ -91,6 +91,16 @@ public class ApiClient {
         return exchange("POST", path, headers, jsonBody);
     }
 
+    /** 带鉴权发一个 JSON 请求体。 */
+    public Response putJson(String path, String bearerToken, String jsonBody) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Content-Type", "application/json");
+        if (bearerToken != null) {
+            headers.put(AUTHORIZATION, "Bearer " + bearerToken);
+        }
+        return exchange("PUT", path, headers, jsonBody);
+    }
+
     /**
      * 原样发送指定的 Content-Type 与请求体。
      *
