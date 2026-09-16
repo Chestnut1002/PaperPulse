@@ -12,6 +12,12 @@
   - `RestAuthenticationEntryPoint`:未认证的 401 与上述格式一致
   - Spring Security 配置:无状态、关闭 CSRF 与表单登录、未认证统一返回 401
   - 配置分层:`application.yml`(可提交)+ `application-local.yml`(本机私有、已忽略)
+- **集成测试**(25 条验收用例入库,`mvn test` 可跑)
+  - 起真实容器 + 真实 Tomcat + 真实 MySQL,用真实 HTTP 请求验证,不用 mock
+  - `ApiClient`:基于 JDK `HttpClient` 的测试客户端(`TestRestTemplate` 在 Spring Boot 4 中已移除)
+  - `TokenForger`:用 `javax.crypto.Mac` **独立**签 JWT,不借助 jjwt —— 否则等于用被测实现验证它自己
+  - `TestDatabaseGuard`:容器启动前核对库名,防止 `create-drop` 误删开发库数据
+  - `application-test.yml`:测试库 `paperpulse_test`,与开发库完全隔离
 - 开发工具:
   - `scripts/kill-port.ps1`:清理残留占用端口的开发服务进程
 
