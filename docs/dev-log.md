@@ -678,3 +678,137 @@ REQ-001 完成约 2/3,六个需求里第一个。按 8 周路线图,进度正常
 
 **三、推送过的秘密要按已泄露处理。** 重写历史只能让仓库表面干净:GitHub 可能仍保留旧对象,
 更不用说缓存与抓取。**真正的补救是轮换,不是抹除。**
+
+---
+
+# 2026-09-16(第七次:验收用例落地为集成测试)
+
+## 本次目标
+
+上次留下的最大一笔技术债:25 条验收用例是**外部 Python 脚本**,没进仓库,改代码后不会自动回归。
+本次把它们落成 `mvn test` 能跑的集成测试,给下一步的 F5 铺一张回归网。
+
+## 完成内容
+
+- 新增 3 个测试类,共 **25 条用例**(与上次验收一一对应)+ 1 条既有的上下文加载测试
+- 测试起**真实 Spring 容器 + 真实 Tomcat(随机端口)**,用真实 HTTP 请求打过去,连真实 MySQL
+- 新增 `TestDatabaseGuard`:容器启动**前**核对库名,防止测试误连开发库
+- 新增测试库 `paperpulse_test`,与开发库完全隔离
+- 修掉一处**我自己写的、具有随机性的测试用例**(详见「问题一」)
+- `README.md` 补「测试」章节;`pom.xml` **零改动**
+
+## 修改文件
+
+| 文件 | 修改 |
+| ---- | ---- |
+| `test/resources/application-test.yml` | 新增。测试 profile:独立库 + `create-drop` |
+| `test/support/ApiClient.java` | 新增。基于 JDK `HttpClient` 的测试客户端 |
+| `test/support/TokenForger.java` | 新增。独立签 JWT,并可翻转片段里的一个 bit |
+| `test/support/TestDatabaseGuard.java` | 新增。库名护栏 |
+| `test/support/AbstractIntegrationTest.java` | 新增。基类:随机端口、真实 HTTP、清表 |
+| `test/auth/AuthApiIntegrationTest.java` | 新增。F3,10 条 |
+| `test/auth/AuthorizationApiIntegrationTest.java` | 新增。F4,9 条 |
+| `test/common/ErrorHandlingIntegrationTest.java` | 新增。E,6 条 |
+| `README.md` | 补「测试」章节 |
+| `CHANGELOG.md` | 补测试条目 |
+
+## 技术方案
+
+### 1. 三个绕不开的选型
+
+**HTTP 测试客户端用 JDK 自带的 `HttpClient`。** Spring 的 `TestRestTemplate` 在 Spring Boot 4 中
+**已被移除**(本地 m2 仓库里 3.2.0 还有、4.1.1 已经没有了)。用它反而更稳妥:不随 Spring 版本变动,
+而且默认就满足测试需要 —— 不跟随重定向(3xx 原样暴露)、不对 4xx/5xx 抛异常(断言 401/404 时不会先炸)。
+
+**数据库用真实 MySQL,不用 H2。** 这条最关键:用户名**大小写不敏感**来自 MySQL 列的排序规则
+`utf8mb4_unicode_ci`,H2 上会得出**相反**结论。用 H2 等于把一个与生产不符的行为固化进测试,
+还可能在将来诱导人去"修"本来正确的代码。测试库地址在 `application-test.yml` 里被整体替换掉,
+所以它是硬编码的,环境变量 `DB_URL` 改不动它。
+
+**用 `@SpringBootTest(RANDOM_PORT)` 而不是 MockMvc。** MockMvc 不经过 Servlet 容器,而这次要覆盖的
+东西有一部分恰恰是容器层面的 —— 错误转发到 `/error` 时的再分发、认证入口点写响应体的时机。
+随机端口也顺便避开了与本机 8080 实例撞车。
+
+### 2. 独立复算签名
+
+`TokenForger` 用 `javax.crypto.Mac` 自己走一遍 HMAC-SHA512,**刻意不用 jjwt**。
+应用代码就是 jjwt 验签的,测试若也用它来造 token,等于用被验证的实现去验证它自己:
+jjwt 理解错规范时两边会一起错,测试照样通过。
+
+### 3. 那道护栏为什么必须跑在容器启动之前
+
+测试配置用 `ddl-auto: create-drop`,它在**容器启动时**就会删表重建。
+如果等 `@BeforeAll` / `@BeforeEach` 再核对库名,开发库的表早就没了 —— 那时护栏只能报告事故,不能阻止事故。
+所以护栏写成 `ApplicationContextInitializer`:此时配置已加载完(环境变量也在内),但还没有任何 Bean 被创建。
+
+## 遇到问题
+
+### 问题一(真问题):一条用例在掷骰子
+
+`F4-3`(篡改签名应返回 401)第一轮通过、第二轮**失败**(返回 200)、第三轮又通过。
+
+根因不在被测代码,在我写的测试。我原本的做法是"把签名最后一个字符换成 `A` 或 `B`"。但:
+
+> HS512 签名是 **64 字节**,Base64URL 编码后是 **86 个字符 = 516 位**,而真实数据只有 **512 位**
+> —— 最后一个字符的**低 4 位是填充,不参与解码**。
+
+`A` 是索引 0(`000000`),`B` 是索引 1(`000001`),高 2 位都是 `00`。把末位在两者间替换,
+**解码出来的字节一模一样**,签名依然有效,服务端返回 200 完全正确。于是这条用例是否真的篡改到了数据,
+全看签名末位碰巧是什么字符。
+
+顺带说明:**上次验收时 F4-3 返回 401 是运气**,那个手法本身就不可靠。
+
+**解决方案**:新增 `TokenForger.flipBit()`,解码出字节、翻转一个 bit、再编码回去,
+并加一句 `assertThat(tampered).isNotEqualTo(token)` 自保。改动必定落在真实数据上。
+
+### 问题二(认知纠正):`DB_URL` 对测试根本不起作用
+
+为验证护栏,我先用 `DB_URL` 指向一个探测库跑测试 —— 结果测试**照常通过**,护栏没响,
+探测库也没被创建。一度以为护栏失效。
+
+实际原因是:`DB_URL` 只是 `application.yml` 里占位符 `${DB_URL:...}` 的名字。
+测试 profile 会把整个 `spring.datasource.url` 属性**替换掉**,那个占位符根本不会求值。
+所以 `DB_URL` 对测试毫无影响。
+
+**这其实是好消息**:测试库地址不可能被 `DB_URL` 悄悄改掉。真正的覆盖向量是优先级高于配置文件的
+`SPRING_DATASOURCE_URL` 环境变量、`-Dspring.datasource.url=` 命令行参数。改用前者重测,护栏正确中止,
+且**探测库自始至终没有被创建** —— 证明它确实拦在了建立连接之前。
+
+（护栏里那句报错文案原本把责任归给 `DB_URL`,已改正。）
+
+### 问题三:中文测试名在控制台是乱码
+
+Surefire 输出里 `@DisplayName` 的中文显示为 `F3 ��¼ǩ�� JWT`。原因是 Windows 控制台默认 GBK,
+而 JVM 以 UTF-8 输出。**不影响测试结果**,只是看日志时碍眼;测试报告文件(如 `target/surefire-reports`)
+里的中文是正常的。
+
+## 测试结果
+
+```
+Tests run: 26, Failures: 0, Errors: 0, Skipped: 0
+```
+
+| 测试类 | 用例数 | 耗时 |
+| ---- | ---- | ---- |
+| `AuthApiIntegrationTest`(F3) | 10 | 7.99 s(含容器启动) |
+| `AuthorizationApiIntegrationTest`(F4) | 9 | 0.94 s |
+| `ErrorHandlingIntegrationTest`(E) | 6 | 0.25 s |
+| `BackendApplicationTests`(既有) | 1 | 0.61 s |
+
+**连跑三轮,均为 26/26 通过,退出码 0** —— 修掉问题一之后不再有随机性。
+
+验证过的几件事:
+- 日志中 `Default catalog/schema: paperpulse_test` —— 确实连的是测试库
+- `Tomcat started on port 63197` —— 确实是真实服务器、随机端口
+- 三个测试类只启动一次容器(上下文缓存命中),F3 之后 F4/E 各不到 1 秒
+- 护栏用探测库验证有效,探测库未被创建
+- 跑完后开发库 `paperpulse` 的 3 条用户数据**完好无损**
+
+## 下一步计划
+
+测试网已经铺好,可以开始 **F5(兴趣标签)** 了 —— 涉及新表 + 新接口,是 F6 的前置。
+新功能一落地就补几条用例,别让这张网漏下去。
+
+遗留(仍不急):
+- `AccessDeniedHandler`(403)未配 —— 现在没有角色概念,不触发
+- 无 CORS 配置 —— 前端接入时补

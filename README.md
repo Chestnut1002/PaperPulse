@@ -83,6 +83,31 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
 curl -s http://localhost:8080/api/users/me -H "Authorization: Bearer $TOKEN"
 ```
 
+## 测试
+
+```bash
+cd backend
+mvn test
+```
+
+集成测试会启动**真实的 Spring 容器 + 真实 Tomcat**(随机端口),用真实 HTTP 请求打过去,
+并连接真实 MySQL —— 不用 mock。这样才能真正验证 BCrypt、JWT 签名和 Spring Security 过滤器链的行为。
+
+数据库口令与运行应用时是同一套:本机放在 `backend/src/main/resources/application-local.yml`,
+其他环境用 `DB_PASSWORD` 环境变量。
+
+测试连的是**独立数据库 `paperpulse_test`**,不会碰开发库 `paperpulse`。
+该库首次运行自动创建,表结构由 `ddl-auto: create-drop` 管理,跑完即删。
+
+> `TestDatabaseGuard` 会在容器启动**之前**核对库名,连错库直接中止构建。
+> 时机很关键:`create-drop` 在容器启动时就会删表重建,等到测试方法里再检查,开发库的表已经没了。
+
+| 测试类 | 覆盖 |
+| ---- | ---- |
+| `AuthApiIntegrationTest` | 登录签发 JWT:签名可独立复算、载荷正确、防用户名枚举、计时侧信道 |
+| `AuthorizationApiIntegrationTest` | 受保护接口鉴权:无 token / 签名被篡改 / 已过期 / 用户不存在 |
+| `ErrorHandlingIntegrationTest` | 客户端错误分类:404 / 400 / 405 / 415 不再一律报 500 |
+
 ## 开发提示
 
 停止 `mvn spring-boot:run` 后,若端口仍被占用(Windows 上 Ctrl+C 可能残留 Java 子进程):
