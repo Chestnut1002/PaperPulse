@@ -176,12 +176,12 @@ docs-plans/ 走 .gitignore 本地保留;发布前无需历史清理,仓库历史
 
 ## 遇到问题
 1. **本机 MySQL root 密码未知**:项目 `.env.example` 中的 `paperpulse123` 及用户回忆的 4 个候选密码均失败
-2. **YAML 八进制陷阱**:数据库密码 `***REMOVED-CREDENTIAL***` 在 YAML 中不加引号会被解析为**八进制整数 ***REMOVED-CREDENTIAL*****,导致 `Access denied for user 'root'@'localhost' (using password: YES)`。现象具有迷惑性——profile 已正确激活、配置文件确实加载,只有值被静默改写
+2. **YAML 八进制陷阱**:以 `0` 开头的数据库密码(如 `012345`)在 YAML 中不加引号会被解析为**八进制整数 `5349`**,导致 `Access denied for user 'root'@'localhost' (using password: YES)`。现象具有迷惑性——profile 已正确激活、配置文件确实加载,只有值被静默改写
 3. 用户机器上的 `docker-compose.yml` 将 MySQL 映射到 3306,与本机已运行的 MySQL80 服务**端口冲突**
 
 ## 解决方案
 1. 在用户本机其它 Java 项目(`D:\develop\JAVA\CODE\demo\demo1` 的 `application.properties`)中找到实际使用的 root 密码,验证通过后复用;未采取"重置 root 密码"这类侵入式方案
-2. 密码值加引号:`password: "***REMOVED-CREDENTIAL***"`。**凡是以 0 开头的数字型字符串(密码、手机号、学号、编号)在 YAML 中一律加引号**
+2. 密码值加引号:`password: "012345"`。**凡是以 0 开头的数字型字符串(密码、手机号、学号、编号)在 YAML 中一律加引号**
 3. 记录待办:若将来改用 Docker 提供 MySQL,需将 compose 端口改为 `3307:3306` 以避免冲突
 
 ## 测试结果
@@ -365,8 +365,8 @@ ac29dc5 chore: add JPA and JWT dependencies with datasource configuration
 
 ## 三、今天踩的坑(按价值排序)
 
-**1. YAML 八进制陷阱 —— 密码 `***REMOVED-CREDENTIAL***` 变成 `***REMOVED-CREDENTIAL***`**
-不加引号的 `***REMOVED-CREDENTIAL***` 被 YAML 当作八进制整数解析。现象极具迷惑性:profile 正确激活、配置文件确实加载、报错却是 `Access denied`。
+**1. YAML 八进制陷阱 —— 以 `0` 开头的密码被当成八进制**
+不加引号的 `012345` 被 YAML 当作八进制整数解析成 `5349`。现象极具迷惑性:profile 正确激活、配置文件确实加载、报错却是 `Access denied`。
 **结论:凡以 0 开头的数字型字符串(密码、手机号、学号、编号),YAML 里一律加引号。**
 
 **2. Windows 上 `Ctrl+C` 杀不掉开发服务**
