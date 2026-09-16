@@ -101,6 +101,38 @@ public class ApiClient {
         return exchange("PUT", path, headers, jsonBody);
     }
 
+    /** 带鉴权发一个 JSON 请求体。 */
+    public Response postJson(String path, String bearerToken, String jsonBody) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Content-Type", "application/json");
+        if (bearerToken != null) {
+            headers.put(AUTHORIZATION, "Bearer " + bearerToken);
+        }
+        return exchange("POST", path, headers, jsonBody);
+    }
+
+    /**
+     * 带鉴权发一个**没有请求体**的 POST。
+     *
+     * <p>收藏 / 记录阅读这类接口的参数全在路径上,带一个空体反而会被当成畸形 JSON。
+     */
+    public Response post(String path, String bearerToken) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        if (bearerToken != null) {
+            headers.put(AUTHORIZATION, "Bearer " + bearerToken);
+        }
+        return exchange("POST", path, headers, null);
+    }
+
+    /** 带鉴权的 DELETE。 */
+    public Response delete(String path, String bearerToken) {
+        Map<String, String> headers = new LinkedHashMap<>();
+        if (bearerToken != null) {
+            headers.put(AUTHORIZATION, "Bearer " + bearerToken);
+        }
+        return exchange("DELETE", path, headers, null);
+    }
+
     /**
      * 原样发送指定的 Content-Type 与请求体。
      *
