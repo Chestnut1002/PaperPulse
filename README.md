@@ -8,7 +8,7 @@
 
 | 需求 | 内容 | 状态 |
 | ---- | ---- | ---- |
-| REQ-001 | 用户注册/登录(JWT),兴趣标签、收藏、阅读历史、论文评分 | 🚧 进行中(注册 / 登录已完成) |
+| REQ-001 | 用户注册/登录(JWT),兴趣标签、收藏、阅读历史、论文评分 | 🚧 进行中(注册 / 登录 / 鉴权已闭环) |
 | REQ-002 | 检索 Agent:自然语言 → 论文检索,返回带来源文献列表 | ⏳ 待开始 |
 | REQ-003 | 论文精读问答:锚点+动态截断 / RAG,回答带引用 | ⏳ 待开始 |
 | REQ-004 | 个性化论文推荐:行为反馈闭环 + 探索位 | ⏳ 待开始 |
@@ -70,8 +70,18 @@ npm install && npm run dev
 | ---- | ---- | ---- | ---- |
 | POST | `/api/auth/register` | 注册,返回用户信息(不含密码) | 否 |
 | POST | `/api/auth/login` | 登录,返回 JWT | 否 |
+| GET | `/api/users/me` | 返回当前登录用户 | 是,`Authorization: Bearer <token>` |
 
 错误响应统一为 `{ timestamp, status, error, message }`,参数校验失败时额外带 `fieldErrors`。
+未认证返回 401,格式与上同 —— 前端只需一套解析逻辑。
+
+```bash
+# 完整链路:登录拿 token → 访问受保护接口
+TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"username":"alice","password":"secret123"}' | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
+curl -s http://localhost:8080/api/users/me -H "Authorization: Bearer $TOKEN"
+```
 
 ## 开发提示
 
