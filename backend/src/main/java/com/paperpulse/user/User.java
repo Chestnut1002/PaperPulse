@@ -24,9 +24,20 @@ public class User {
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
 
+    /**
+     * 用户名。<b>大小写不敏感</b>。
+     *
+     * <p>这不是 Java 代码决定的,而是 MySQL 列的排序规则 {@code utf8mb4_unicode_ci}
+     * 决定的({@code _ci} = case insensitive)—— {@code WHERE username = 'Alice'} 会命中
+     * {@code 'alice'}。好处是注册查重与登录校验天然一致,不会出现两个只差大小写的账号。
+     *
+     * <p>若日后把列的排序规则改成 {@code _bin} / {@code _cs},这里的行为会静默反转。
+     * 改之前先看这条注释,并同步调整前端提示。
+     */
     @Column(nullable = false, unique = true, length = 50)
     private String username;
 
+    /** 邮箱。同样受 {@code utf8mb4_unicode_ci} 影响,大小写不敏感。 */
     @Column(nullable = false, unique = true, length = 100)
     private String email;
 
