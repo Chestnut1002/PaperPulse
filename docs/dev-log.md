@@ -416,3 +416,236 @@ Invoke-RestMethod -Uri http://localhost:8080/api/auth/login -Method Post `
 - ai-service 有可用的 DeepSeek 调用与论文检索脚本(`ai-service/scripts/`,**尚未纳入 Git**),是 REQ-002 的起点
 
 **待确认事项**:单元/集成测试暂定"接口稳定后统一补"(节奏 A),用户尚未最终确认。
+
+---
+
+# 2026-09-16(第五次:F4 鉴权闭环 + 自主验收)
+
+## 本次目标
+
+补上 F3 留下的缺口:F3 能签发 token,但**没有任何接口消费它**,所以"登录成功"只证明 token 能生成,
+没证明它有用。F4 做 JWT 鉴权过滤器 + `GET /api/users/me`,形成完整闭环。
+
+按用户要求,**验收由 AI 自主完成** —— 跑真实 MySQL + 真实 HTTP,不用 mock,
+只把结果呈现给用户。
+
+## 完成内容
+
+- F4:`JwtAuthenticationFilter` 从 `Authorization: Bearer <token>` 解析并认证
+- F4:`GET /api/users/me` 返回当前登录用户
+- `RestAuthenticationEntryPoint`:让 401 的响应格式与全局错误格式统一
+- **修复一个真 bug**:四类客户端错误(路径不存在 / 畸形 JSON / 方法不支持 / Content-Type 不支持)
+  原本全部返回 **500**
+- 25 项验收用例全部通过(19 项 F3+F4 + 6 项错误处理回归)
+- 补注:用户名大小写不敏感是 MySQL 排序规则决定的,不是 Java 代码
+
+## 修改文件
+
+| 文件 | 修改 |
+| ---- | ---- |
+| `security/JwtAuthenticationFilter.java` | 新增。解析 Bearer token,把 userId 写入 SecurityContext |
+| `security/RestAuthenticationEntryPoint.java` | 新增。401 输出统一 JSON |
+| `user/UserController.java` | 新增。`GET /api/users/me` |
+| `config/SecurityConfig.java` | 挂载过滤器;换用自定义入口 |
+| `common/GlobalExceptionHandler.java` | 改为继承 `ResponseEntityExceptionHandler`;**本次最重要的修复** |
+| `user/User.java` | 补注大小写不敏感的成因 |
+
+## 技术方案
+
+### 1. 过滤器只认证,不拦截
+
+`JwtAuthenticationFilter` 在 token 缺失或无效时**不写响应、不抛异常**,只放行,
+让后面的 `AuthorizationFilter` 按放行规则决定拦不拦。若在过滤器里直接写 401,
+401 就有了两个出口、两种响应格式。
+
+同理,过滤器**不查数据库**,只把 userId 放进 `SecurityContext`;需要用户实体时由业务层再查。
+否则每个受保护请求都白跑一次 SQL,哪怕接口根本用不到用户行。
+
+`/api/users/me` 则**刻意每次回查数据库**,而不是直接信任 token 里的 username ——
+token 一旦签发就无法撤回,回查意味着用户被删除后其 token 立即失效。**签名有效 ≠ 用户仍然存在。**
+
+### 2. 过滤器不能用 `@Component` 声明
+
+Spring Boot 会把容器里所有 `Filter` 类型的 Bean **额外注册到 Servlet 容器**,
+导致它在安全链之外再跑一遍。用 `new JwtAuthenticationFilter(jwtService)` 传进安全链,只让它被持有一份。
+
+### 3. 统一错误的正确做法是继承 `ResponseEntityExceptionHandler`
+
+`@ExceptionHandler(Exception.class)` 兜底看起来安全,实际上会**抢在 Spring MVC 自己的异常解析器之前**
+把所有内置异常都吞成 500。Spring 已经把这些异常逐个映射好了,且它们最终都汇聚到
+`handleExceptionInternal` 一个方法 —— 继承父类 + 覆盖那一个漏斗,比逐个枚举异常类型既更简单也更完整。
+
+## 遇到问题
+
+### 问题一(真 bug):四类客户端错误全部返回 500
+
+验收时 F4-10 用例(带合法 token 访问不存在的路径)返回 **500**,预期是 404。顺着查发现同一个根因还影响:
+
+| 场景 | 修复前 | 应为 |
+| ---- | ---- | ---- |
+| 路径不存在 | 500 | 404 |
+| 请求体不是合法 JSON | 500 | 400 |
+| 用 GET 调只接受 POST 的接口 | 500 | 405 |
+| Content-Type 不支持 | 500 | 415 |
+
+两个危害:一是**把客户端的错报成服务端的错**,前端无法区分"我请求错了"和"服务挂了";
+二是每来一个 404 就打一整条堆栈(日志里实测刷了 5 条),日志监控会被误报淹没。
+
+**解决方案**:`GlobalExceptionHandler` 改为继承 `ResponseEntityExceptionHandler`,
+覆盖 `handleExceptionInternal` 统一响应格式,并覆盖 `handleMethodArgumentNotValid` 补上 `fieldErrors`。
+
+> 注意:覆盖而不是另加 `@ExceptionHandler(MethodArgumentNotValidException.class)` ——
+> 父类已有同名处理方法,再声明一个会让 Spring 启动时报 `Ambiguous @ExceptionHandler method mapped`。
+
+**修复后**:25 项用例全过,整轮日志 **0 条 ERROR、0 条堆栈**。
+
+> **Code Review 时又抓到一处自己埋的坑**:覆盖 `handleExceptionInternal` 时把 `headers` 参数丢掉了。
+> 父类在 405 时会往 headers 里塞 `Allow`(列出该路径支持的方法),而 RFC 9110 §15.5.6 要求 405 响应
+> **必须**带这个头。第一版测试只断言状态码,完全察觉不到 —— 补上 `Allow` 断言后才暴露。
+> **教训:断言不能只看状态码。**
+
+### 问题二(认知纠正):用户名是大小写不敏感的
+
+验收用例 F3-6 原本预期"用 `Alice` 登录 `alice` 的账号应返回 401",实测返回 **200**。
+
+根因不是代码,是数据库:MySQL 列排序规则为 `utf8mb4_unicode_ci`,`_ci` = case insensitive,
+`WHERE username = 'Alice'` 会命中 `'alice'`。
+
+进一步验证语义是否**自洽** —— 补测"注册 `ALICE`":返回 409 用户名已被占用。
+说明注册查重与登录校验用的是同一套规则,不会出现两个只差大小写的账号(那样后注册的账号永远登不进去)。
+**结论:这是正确行为,原预期写错了**。已在 `User.java` 补注释,提醒日后若改排序规则行为会静默反转。
+
+### 问题三(预期落空):`/error` 放行原来是多余的
+
+原以为需要 `.requestMatchers("/error").permitAll()`:异常转发到 `/error` 时会再走一遍安全链,
+那次分发里没有认证信息,不放行的话真实错误会被改写成 401。
+
+实测:去掉这行后 25 项用例**依然全过**,且直接访问 `/error` 从 500 变成 401(更安全)。
+原因是 `GlobalExceptionHandler` 在 DispatcherServlet 内部就把错误处理掉了,**根本不会触发 ERROR 分发** ——
+这行放行守的是一条走不到的路。**已删除**(不是"先留着以防万一":留着反而让匿名用户能直接访问 `/error` 拿到 500)。
+
+### 问题四:Jackson 3 的包名变了
+
+`RestAuthenticationEntryPoint` 注入 `ObjectMapper` 时编译报错 `com.fasterxml.jackson.databind` 无法解析。
+
+查依赖树发现:Spring Boot 4 已迁到 **Jackson 3**,坐标 `tools.jackson.core`、包名 `tools.jackson.databind`;
+工程里那个 `com.fasterxml.jackson.core:jackson-databind` 是 **jjwt 拖进来的 Jackson 2**,且是 `runtime` 作用域
+—— **运行期在、编译期看不见**。照着老包名写必然编译不过。
+
+## 测试结果
+
+### 环境
+
+真实 MySQL 8.0.46 + 真实 HTTP,独立实例跑在 **8081**(不干扰用户 8080 上的实例)。
+JWT 的签名复算与伪造用 Python 标准库 `hmac/hashlib` 独立实现,**不借助 jjwt** ——
+否则等于用同一套实现验证自己,证明不了什么。
+
+### F3(签发 token)
+
+| 编号 | 用例 | 实测 | 结果 |
+| ---- | ---- | ---- | ---- |
+| F3-1 | 正确凭据登录 | 200,tokenType=Bearer,expiresIn=86400 | PASS |
+| F3-2 | 密码错误 | 401 + 用户名或密码错误 | PASS |
+| F3-3 | 用户名不存在 | 401 + **同一句文案**(防枚举) | PASS |
+| F3-4 | 用户名/密码为空 | 400 + fieldErrors | PASS |
+| F3-5 | 用户名含 `' OR '1'='1` | 401(而非 500,证明是参数化查询) | PASS |
+| F3-6 | 用 `Alice` 登录 `alice` | 200(大小写不敏感,见问题二) | PASS |
+| F3-10 | 注册 `ALICE`(已存在 `alice`) | 409 用户名已被占用(与 F3-6 自洽) | PASS |
+| F3-7 | 解出 token 的 header/payload | alg=HS512,sub=2,有效期=86400s | PASS |
+| F3-8 | **用密钥独立复算 HMAC 签名** | 复算一致;篡改后不一致 | PASS |
+| F3-9 | 计时侧信道 | 存在 82ms vs 不存在 88ms(差 7.1%) | PASS |
+
+### F4(消费 token)
+
+| 编号 | 用例 | 实测 | 结果 |
+| ---- | ---- | ---- | ---- |
+| F4-1 | 不带 Authorization | 401 + 统一 JSON 格式 | PASS |
+| F4-2 | `Bearer abc` | 401 | PASS |
+| F4-3 | 合法 token 改掉签名最后一位 | 401 | PASS |
+| F4-4 | 自签已过期的 token | 401 | PASS |
+| F4-5 | 真实登录拿到的 token | 200,id=2,响应无 password 字段 | PASS |
+| F4-6 | 漏掉 `Bearer ` 前缀 | 401 | PASS |
+| F4-7 | scheme 全小写 `bearer` | 200(RFC 7235 规定大小写不敏感) | PASS |
+| F4-8 | 自签合法但 `sub=999999` 的 token | 401(签名有效≠用户存在) | PASS |
+| F4-9 | 回归:登录口不带 token 仍可访问 | 200 | PASS |
+
+### E(错误处理回归 —— 修复前这五项全是 500)
+
+| 编号 | 用例 | 修复前 | 实测 | 结果 |
+| ---- | ---- | ---- | ---- | ---- |
+| E-1 | 已登录访问不存在的路径 | 500 | 404 | PASS |
+| E-2 | 匿名访问不存在的路径 | — | 401(不暴露路径是否存在) | PASS |
+| E-3 | 请求体不是合法 JSON | 500 | 400 | PASS |
+| E-4 | GET 调只接受 POST 的接口 | 500 | 405 + `Allow: POST` | PASS |
+| E-5 | Content-Type 不支持 | 500 | 415 | PASS |
+| E-6 | 直接访问 `/error` | 500 | 401 | PASS |
+
+**合计 25 项:25 PASS / 0 FAIL。**
+
+## 下一步计划
+
+REQ-001 的**认证部分已闭环**,剩下 F5(兴趣标签)、F6(收藏 / 阅读历史 / 论文评分),
+做完这三项 REQ-001 才算整体完成。
+
+技术债(记在这里别忘了):
+- 单元/集成测试仍未落地。`pom.xml` 里已有 `spring-boot-starter-*-test` 三个测试 starter,
+  JUnit + MockMvc 可用,但目前只有一个空的上下文加载测试。本次验收是**外部脚本**,没进仓库,
+  下次改代码时不会自动回归 —— 这是目前最大的一笔债。
+- `AccessDeniedHandler`(403)尚未配置。现在没有角色概念,不触发;等引入权限时再补。
+- 无 CORS 配置,前端接入时需要补。
+
+---
+
+# 工作总结(截至 2026-09-16)
+
+## 今天做完了什么
+
+**REQ-001 用户系统:6 个功能点完成 4 个,认证部分完整闭环。**
+
+| 功能点 | 内容 | 状态 |
+| ---- | ---- | ---- |
+| F1 | 后端骨架 + 数据库连通 | Done |
+| F2 | 用户注册(BCrypt + 参数校验 + 统一错误响应) | Done |
+| F3 | 用户登录(签发 JWT) | Done,已验收 |
+| F4 | 鉴权过滤器 + `GET /api/users/me` | Done,已验收 |
+| F5 | 兴趣标签 | 待做 |
+| F6 | 收藏 / 阅读历史 / 论文评分 | 待做 |
+
+现在这条链路是通的:**注册 → 登录拿 token → 带 token 访问受保护接口**。
+不是"能编译",是 25 条用例逐条跑过、跑在真实数据库和真实 HTTP 上。
+
+## 最有价值的产出不是新代码,是发现的那个 bug
+
+新增的三个类(F4)加起来 181 行,写得比较顺。真正的收获是验收时撞出来的那个问题:
+**四类客户端错误原本全被当成 500**。
+
+这个 bug 不写验收用例基本发现不了 —— 正常路径全对,注册登录都好好的,
+只有去问"如果请求本身是错的会怎样"才会撞上。它的危害也不是"功能坏了",而是:
+- 前端无法区分"我请求错了"和"服务挂了"
+- 每来一个 404 打一整条堆栈,真出事时日志已经被淹了
+
+修复后整轮验收日志 **0 条 ERROR、0 条堆栈**。
+
+顺带纠正了两个认知错误(用户名大小写不敏感、`/error` 放行其实多余)——
+这两个都是"我以为",实测把"我以为"推翻了。**`/error` 那行我没有"先留着以防万一",
+而是删掉了**:留着反而让匿名用户能直接访问 `/error` 拿到 500。
+
+## 工作量分布
+
+- 写新功能(F4 三个类):约三分之一
+- 验收 + 修 bug:约三分之二
+
+比例有点反直觉,但对"要给别人看的项目"来说是对的 —— 代码能跑只是及格线。
+
+## 现在项目处在什么位置
+
+REQ-001 完成约 2/3,六个需求里第一个。按 8 周路线图,进度正常。
+
+**最大的技术债:验收是外部脚本,没进仓库。** 今天这 25 条用例下次改代码时不会自动重跑。
+建议 F5 开始时顺便把测试落地 —— 不用追求覆盖率,先把这 25 条变成能 `mvn test` 跑的东西,
+之后每加一个功能点就补几条。这件事拖得越久,补起来越贵。
+
+## 下次开工怎么开始
+
+直接做 F5(兴趣标签),涉及新表 + 新接口,是 F6 的前置。
+第一步建议先把今天这 25 条用例落成集成测试,再动 F5 —— 这样 F5 改坏了能立刻发现。
