@@ -13,7 +13,7 @@
   - Spring Security 配置:无状态、关闭 CSRF 与表单登录、未认证统一返回 401
   - 配置分层:`application.yml`(可提交)+ `application-local.yml`(本机私有、已忽略)
 - **兴趣标签**(F5)
-  - `GET /api/interests`:标签词表,33 个标签分 6 类,含权重区间与数量上限
+  - `GET /api/interests`:标签词表,34 个标签分 6 类,含权重区间与数量上限
   - `GET /api/users/me/interests` / `PUT /api/users/me/interests`:读取与**全量替换**(含清空)
   - 受控词表 `InterestTag`:细分研究领域,每项携带对应的 Semantic Scholar 过滤值与检索词,
     供 REQ-002 检索与 REQ-004 推荐直接消费
