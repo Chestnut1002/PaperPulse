@@ -812,3 +812,164 @@ Tests run: 26, Failures: 0, Errors: 0, Skipped: 0
 遗留(仍不急):
 - `AccessDeniedHandler`(403)未配 —— 现在没有角色概念,不触发
 - 无 CORS 配置 —— 前端接入时补
+
+---
+
+# 2026-09-16(第八次:F5 兴趣标签)
+
+## 本次目标
+
+REQ-001 的第五个功能点。F1–F4 解决"用户是谁",F5 开始解决"用户想要什么" ——
+这是 REQ-004 个性化推荐的**冷启动信号源**:新用户没有任何行为数据,唯一能拿到的偏好输入
+就是他勾选的兴趣。
+
+顺带验证一件事:上次刚铺好的集成测试网,能不能真的接住一个新功能。
+
+## 完成内容
+
+- 新增 `com.paperpulse.interest` 包:33 个标签的词表 + 用户兴趣的读写
+- 新增 3 个接口:`GET /api/interests`、`GET|PUT /api/users/me/interests`
+- 新增数据表 `user_interest`,含 `(user_id, tag_key)` 唯一约束
+- 新增 **15 条集成测试**,全部通过
+- 设计文档 `docs/design/F5-兴趣标签.md`
+- 全量回归 **41/41 通过**(F3=10,F4=9,E=6,F5=15,上下文=1),连跑三轮稳定
+- **`pom.xml` 零改动** —— 没有引入任何新依赖
+
+## 修改文件
+
+| 文件 | 修改 |
+| ---- | ---- |
+| `main/interest/InterestTag.java` | 新增。词表枚举,33 项 6 分类,含 S2 映射 |
+| `main/interest/UserInterest.java` | 新增。实体 + 权重区间常量 |
+| `main/interest/UserInterestRepository.java` | 新增。含"先删后插"用的 JPQL 批量删除 |
+| `main/interest/InterestService.java` | 新增。词表 / 读取 / 全量替换 |
+| `main/interest/InterestController.java` | 新增。三个接口 |
+| `main/interest/dto/*.java` | 新增。3 个 DTO |
+| `test/interest/InterestApiIntegrationTest.java` | 新增。F5,15 条 |
+| `test/support/AbstractIntegrationTest.java` | 改。清表时一并删 `user_interest` |
+| `docs/design/F5-兴趣标签.md` | 新增。设计文档 |
+| `docs/requirements.md` | F5 → ✅ Done |
+| `README.md` | API 表补 3 个接口;测试类表补 F5 |
+| `CHANGELOG.md` | 补 F5 条目 |
+
+## 技术方案
+
+### 1. 词表:受控枚举,33 项分 6 类
+
+标签没有做成自由输入,也没有直接照搬 Semantic Scholar 的 `fieldsOfStudy` ——
+后者只有 23 个大类,「Computer Science」是**一个**值。全站都是 CS 论文的项目里,
+用户如果只能选这一项,推荐模块从兴趣标签学到的信息量是 **0 bit**。
+
+所以词表是**细粒度研究领域**(推荐系统 / 序列推荐 / 冷启动推荐 / 图神经网络 …),
+每个标签**另外携带**它对应的 S2 过滤值与检索词:
+
+```java
+RECOMMENDER_SYSTEM("推荐系统", "信息检索与推荐", "Computer Science", "recommender system"),
+```
+
+**细粒度用于建模,粗粒度用于检索**,两者不是二选一。
+
+词表定义在代码里而不是数据库表:受控词表的变更应当经过代码评审。用户表里存的是
+枚举的 `key()`(小写枚举名),不存展示名 —— 以后改中文展示名不影响已有数据。
+
+### 2. PUT 全量替换
+
+标签最多 10 个,全量重写的开销可以忽略,换来的是语义极其简单:**请求体就是最终状态**。
+
+如果拆成 POST / DELETE / PATCH 三条接口,客户端就要自己维护"本地和服务端是否一致" ——
+重试会重复添加、并发编辑会互相覆盖、断线重连要重新同步。这些问题在全量替换模型下根本不存在。
+
+### 3. 校验先于删数据
+
+`replaceFor` 里,词表校验和查重都在删除 **之前**完成。否则一次拼写错误会让请求在删完旧数据
+之后才失败 —— 事务虽然会回滚,但**错误响应本身应该保证"什么都没发生"**。
+回滚是最后一道防线,不是第一道。用例 F5-11 专门盯这一点。
+
+## 遇到问题
+
+### 问题一(真问题,也是本次最有价值的发现):Hibernate 插入先于删除
+
+换用 Spring Data 派生的 `deleteByUserId` 后,**F5-5 / F5-6 / F5-7 三条用例当场失败**:
+
+```
+Duplicate entry '3-recommender_system' for key 'user_interest.uk_user_interest_user_tag'
+Duplicate entry '2-information_retrieval' for key 'user_interest.uk_user_interest_user_tag'
+Duplicate entry '11-nlp'           for key 'user_interest.uk_user_interest_user_tag'
+```
+
+根因:派生删除走的是"查出实体 → 逐个标记删除",而 Hibernate 刷盘时 **INSERT 先于 DELETE 执行**。
+于是"标签没变、只是权重变了"这种最常见的场景会**先插新行、再删旧行**,迎面撞上唯一约束。
+
+这在只考虑"增删标签"时完全看不出来 —— 必须先删掉再插入同一个 key 才会触发。
+
+**解决方案**:改用 `@Modifying + @Query` 的 JPQL 批量删除,它是当场执行的,不存在次序问题。
+
+**这个坑值得记两点:**
+
+1. 它是**实测**出来的,不是推理出来的。一开始我就怀疑有这个次序问题,但没有靠推理下结论 ——
+   临时把实现换成派生版本跑了一遍,拿到确切的报错信息才改回来。
+2. 它反过来证明那三条用例是**有意义的**。如果只测"新增标签"和"清空",派生版本能通过**全部**用例,
+   问题会一直潜伏到某天有人改了权重。
+
+证据(含原始报错)已写进 `UserInterestRepository#deleteAllByUserId` 的注释,而不是只留在这份日志里。
+
+### 问题二(自查):排序时拿 key 反推枚举名
+
+写排序比较器时,我一度用 `InterestTag.valueOf(key.toUpperCase())`。
+
+两个毛病:一是 `toUpperCase()` **不带 Locale** —— 土耳其语环境下 `i` 会变成 `İ`,直接抛异常;
+二是它把"key 就是小写枚举名"这条实现细节复制到了第二处,将来 key 规则一改,这里会静默错位。
+
+改成走已有的 `InterestTag.findByKey(key).map(InterestTag::ordinal).orElse(Integer.MAX_VALUE)`,
+并给查不到的情况兜一个最大值而不是抛异常 —— **排序不该成为第二个失败点**。
+
+### 问题三(小):DTO 里的 weight 用 `Integer` 而不是 `int`
+
+原先用 `int`,缺 `weight` 字段时会被反序列化成 `0`,再被 `@Min(1)` 拦下,报"weight 必须大于等于 1"。
+用户明明**没填**,却被告知**填错了数字** —— 报错信息指向了错误的原因。
+
+改成 `Integer` + `@NotNull`,缺字段时报的是"weight 不能为空"。用例 F5-10 覆盖。
+
+## 测试结果
+
+```
+Tests run: 41, Failures: 0, Errors: 0, Skipped: 0
+```
+
+| 测试类 | 用例数 | 本次状态 |
+| ---- | ---- | ---- |
+| `AuthApiIntegrationTest`(F3) | 10 | ✅ |
+| `AuthorizationApiIntegrationTest`(F4) | 9 | ✅ |
+| `ErrorHandlingIntegrationTest`(E) | 6 | ✅ |
+| `InterestApiIntegrationTest`(F5) | 15 | ✅ 新增 |
+| `BackendApplicationTests` | 1 | ✅ |
+
+**连跑三轮,均为 41/41 通过,退出码 0。**
+
+F5 用例按风险分组:
+
+| 分组 | 用例 | 针对的风险 |
+| ---- | ---- | ---- |
+| 词表 | F5-1 / F5-2 | 词表完整性、未登录 401 |
+| 替换语义 | F5-3 ~ F5-8 | 少传的标签要真的消失、空数组要真的清空 |
+| **写入次序** | **F5-6 / F5-7** | **改权重时标签没变,先插后删会撞唯一约束** |
+| 校验 | F5-9 ~ F5-13 | 权重越界、缺 weight、未知标签、重复标签、超上限 |
+| 边界 | F5-14 | **恰好** 10 个必须被允许 |
+| 隔离 | F5-15 | 用户之间互不影响 |
+
+已验证:测试仍只连 `paperpulse_test`,跑完后开发库 `paperpulse` 的用户数据完好;
+整个 F5 测试类耗时 2.7 s(容器复用,不用重启)。
+
+## 上一节遗留问题的状态
+
+- `AccessDeniedHandler`(403)未配 —— **仍然未配**,现在依然没有角色概念,不触发
+- 无 CORS 配置 —— **仍然未配**,前端接入时补
+
+## 下一步计划
+
+**F6:收藏 / 阅读历史 / 论文评分**,做完 REQ-001 就整体完成。
+
+F6 与 F5 有一个共同点:都是"用户 × 论文"的关联数据。但 F6 会多出一个 F5 没有的问题 ——
+**论文本身不在本地库里**(要等 REQ-002 检索回来才有)。这需要在动手前先定下来:
+是先把论文信息落到本地表(冗余存储,后续离线可用),还是只存外部 ID(轻量,但每次都要回源)。
+这是 F6 的第一个设计决策,不急着写代码。
