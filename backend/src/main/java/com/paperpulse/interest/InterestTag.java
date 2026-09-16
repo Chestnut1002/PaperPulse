@@ -5,6 +5,7 @@ import com.paperpulse.common.ApiException;
 import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.stream.Collectors;
@@ -85,9 +86,17 @@ public enum InterestTag {
         this.s2Query = s2Query;
     }
 
-    /** 稳定标识,存进数据库、出现在 API 里的就是它。改名不影响已有数据。 */
+    /**
+     * 稳定标识,存进数据库、出现在 API 里的就是它。改名不影响已有数据。
+     *
+     * <p><b>必须带 {@link Locale#ROOT}:</b>不带 Locale 的 {@code toLowerCase()} 在土耳其语环境下
+     * 会把 {@code I} 变成无点的 {@code ı},于是 {@code INFORMATION_RETRIEVAL} 得到
+     * {@code ınformation_retrieval}。它和库里存的 {@code information_retrieval} 对不上,
+     * 读取时会被 {@link #findByKey} 判为"词表里没有这个标签"而**静默过滤掉** ——
+     * 用户看不到任何报错,只是已保存的兴趣凭空少了几项。
+     */
     public String key() {
-        return name().toLowerCase();
+        return name().toLowerCase(Locale.ROOT);
     }
 
     public String displayName() {
