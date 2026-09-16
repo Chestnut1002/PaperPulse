@@ -12,7 +12,14 @@
   - `RestAuthenticationEntryPoint`:未认证的 401 与上述格式一致
   - Spring Security 配置:无状态、关闭 CSRF 与表单登录、未认证统一返回 401
   - 配置分层:`application.yml`(可提交)+ `application-local.yml`(本机私有、已忽略)
-- **集成测试**(25 条验收用例入库,`mvn test` 可跑)
+- **兴趣标签**(F5)
+  - `GET /api/interests`:标签词表,33 个标签分 6 类,含权重区间与数量上限
+  - `GET /api/users/me/interests` / `PUT /api/users/me/interests`:读取与**全量替换**(含清空)
+  - 受控词表 `InterestTag`:细分研究领域,每项携带对应的 Semantic Scholar 过滤值与检索词,
+    供 REQ-002 检索与 REQ-004 推荐直接消费
+  - 新表 `user_interest`,含 `(user_id, tag_key)` 唯一约束
+  - 权重 1–5,单个用户最多 10 个标签
+- **集成测试**(`mvn test` 可跑,共 41 条:F3=10、F4=9、E=6、F5=15、上下文=1)
   - 起真实容器 + 真实 Tomcat + 真实 MySQL,用真实 HTTP 请求验证,不用 mock
   - `ApiClient`:基于 JDK `HttpClient` 的测试客户端(`TestRestTemplate` 在 Spring Boot 4 中已移除)
   - `TokenForger`:用 `javax.crypto.Mac` **独立**签 JWT,不借助 jjwt —— 否则等于用被测实现验证它自己

@@ -8,7 +8,7 @@
 
 | 需求 | 内容 | 状态 |
 | ---- | ---- | ---- |
-| REQ-001 | 用户注册/登录(JWT),兴趣标签、收藏、阅读历史、论文评分 | 🚧 进行中(注册 / 登录 / 鉴权已闭环) |
+| REQ-001 | 用户注册/登录(JWT),兴趣标签、收藏、阅读历史、论文评分 | 🚧 进行中(注册 / 登录 / 鉴权 / 兴趣标签已完成) |
 | REQ-002 | 检索 Agent:自然语言 → 论文检索,返回带来源文献列表 | ⏳ 待开始 |
 | REQ-003 | 论文精读问答:锚点+动态截断 / RAG,回答带引用 | ⏳ 待开始 |
 | REQ-004 | 个性化论文推荐:行为反馈闭环 + 探索位 | ⏳ 待开始 |
@@ -71,6 +71,9 @@ npm install && npm run dev
 | POST | `/api/auth/register` | 注册,返回用户信息(不含密码) | 否 |
 | POST | `/api/auth/login` | 登录,返回 JWT | 否 |
 | GET | `/api/users/me` | 返回当前登录用户 | 是,`Authorization: Bearer <token>` |
+| GET | `/api/interests` | 兴趣标签词表,按分类返回,含权重区间与数量上限 | 是 |
+| GET | `/api/users/me/interests` | 当前用户的兴趣标签 + 权重 | 是 |
+| PUT | `/api/users/me/interests` | **全量替换**当前用户的兴趣标签(传空数组即清空) | 是 |
 
 错误响应统一为 `{ timestamp, status, error, message }`,参数校验失败时额外带 `fieldErrors`。
 未认证返回 401,格式与上同 —— 前端只需一套解析逻辑。
@@ -82,6 +85,17 @@ TOKEN=$(curl -s -X POST http://localhost:8080/api/auth/login \
   -d '{"username":"alice","password":"secret123"}' | python -c "import sys,json;print(json.load(sys.stdin)['token'])")
 curl -s http://localhost:8080/api/users/me -H "Authorization: Bearer $TOKEN"
 ```
+
+兴趣标签用 `PUT` 提交**最终状态**,不是增量 —— 没出现在请求体里的标签会被删掉:
+
+```bash
+curl -s -X PUT http://localhost:8080/api/users/me/interests \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"interests":[{"tag":"recommender_system","weight":5},{"tag":"nlp","weight":3}]}'
+```
+
+标签 key 从 `GET /api/interests` 取。权重 1–5,一个用户最多 10 个标签
+(上限由接口返回,前端不必硬编码)。
 
 ## 测试
 
@@ -107,6 +121,7 @@ mvn test
 | `AuthApiIntegrationTest` | 登录签发 JWT:签名可独立复算、载荷正确、防用户名枚举、计时侧信道 |
 | `AuthorizationApiIntegrationTest` | 受保护接口鉴权:无 token / 签名被篡改 / 已过期 / 用户不存在 |
 | `ErrorHandlingIntegrationTest` | 客户端错误分类:404 / 400 / 405 / 415 不再一律报 500 |
+| `InterestApiIntegrationTest` | 兴趣标签:全量替换语义、改权重时的写入次序、校验先于删数据 |
 
 ## 开发提示
 
