@@ -29,8 +29,8 @@ public class InterestController {
      * 没必要对匿名者开放。
      */
     @GetMapping("/api/interests")
-    public InterestCatalogResponse catalog() {
-        return interestService.catalog();
+    public InterestCatalogResponse catalog(@AuthenticationPrincipal Long userId) {
+        return interestService.catalog(userId);
     }
 
     /** 当前用户的兴趣标签。 */

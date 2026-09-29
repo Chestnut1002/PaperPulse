@@ -136,6 +136,18 @@ class InterestApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("F5-2b 签名合法但用户已被删除的 token 不能取词表")
+    void catalogRejectsTokenOfDeletedUser() {
+        // 与 F4-8 同一类问题:鉴权过滤器只验签不查库,所以"签名有效"不等于"用户还在"。
+        // 词表接口虽然用不到用户实体,但这条保证要么对所有接口成立,要么等于没有 ——
+        // 之前检索接口就漏过一次。
+        String ghost = forger.forge(999_999L, "ghost",
+                java.time.Instant.now(), java.time.Instant.now().plusSeconds(3600));
+
+        assertThat(api.get(CATALOG, ghost).status()).isEqualTo(401);
+    }
+
+    @Test
     @DisplayName("F5-3 新用户的兴趣列表为空")
     void newUserHasNoInterests() {
         String token = registerAndLogin("alice");

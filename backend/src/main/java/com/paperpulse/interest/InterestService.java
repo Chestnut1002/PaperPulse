@@ -4,6 +4,7 @@ import com.paperpulse.common.ApiException;
 import com.paperpulse.interest.dto.InterestCatalogResponse;
 import com.paperpulse.interest.dto.UpdateInterestsRequest;
 import com.paperpulse.interest.dto.UserInterestResponse;
+import com.paperpulse.user.UserService;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -38,13 +39,23 @@ public class InterestService {
                     .orElse(Integer.MAX_VALUE));
 
     private final UserInterestRepository userInterestRepository;
+    private final UserService userService;
 
-    public InterestService(UserInterestRepository userInterestRepository) {
+    public InterestService(UserInterestRepository userInterestRepository, UserService userService) {
         this.userInterestRepository = userInterestRepository;
+        this.userService = userService;
     }
 
-    /** 标签词表。不含任何用户数据,登录后即可取。 */
-    public InterestCatalogResponse catalog() {
+    /**
+     * 标签词表。不含任何用户数据,登录后即可取。
+     *
+     * <p>虽然用不到用户实体,仍然回查一次 —— 鉴权过滤器只验签、不查库
+     * (见 {@code JwtAuthenticationFilter} 的说明),所以"签名有效"只证明 token 是我们签发的,
+     * **不证明这个用户现在还在**。用户被删除后其 token 要到过期才失效,这条保证
+     * 要么对所有接口成立,要么等于没有。查不到会抛 401,与 {@code GET /api/users/me} 同一个落点。
+     */
+    public InterestCatalogResponse catalog(Long userId) {
+        userService.getById(userId);
         return InterestCatalogResponse.from(InterestTag.groupedByCategory(), MAX_TAGS);
     }
 
