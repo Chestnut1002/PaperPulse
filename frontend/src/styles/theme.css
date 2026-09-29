@@ -1,0 +1,228 @@
+/* ============================================================
+   PaperPulse 视觉定稿:蓝白 · 单一强调色
+   骨架 = 「极简留白」;吸收三处:
+     · 柔和层次   → 权重五档文字色恒定、hover 不加深底色、以最不利底色核算对比度
+     · 学术纸感   → 占位符升级到 5.1:1、标签页右栏「已选强度」名单
+     · 现代工具感 → 预计算 --el-color-primary-light-3…9、上限常驻可见
+
+   设计要点:全页只有墨色三级 + 一个蓝,层次由四级字号 / 三级字重 / 留白承担;
+   卡片零阴影、无大色块。换主色只需改 --pp-accent 与 --el-color-primary 系列。
+   ============================================================ */
+
+/* 为什么写成 `:root:root`:
+   Element Plus 的样式是按需引入的,落在各路由的异步 chunk 里,加载顺序晚于本文件 ——
+   同特异性时后者胜,所以直接写 `:root` 会被组件库的默认值盖掉。
+   重复一次伪类把特异性提到 (0,2,0),与加载顺序解耦。下同。 */
+:root:root {
+  /* ── 字体(全系统栈,离线可用) ───────────────────── */
+  --pp-font-sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC',
+    'Hiragino Sans GB', 'Microsoft YaHei', 'Helvetica Neue', Arial, sans-serif;
+  --pp-font-mono: ui-monospace, SFMono-Regular, 'SF Mono', Consolas, 'Cascadia Mono',
+    'Roboto Mono', monospace;
+
+  /* ── 墨色(文字)。注释 = 白底 : #F6F8FB 底 对比度 ── */
+  --pp-ink: #16181d; /* 17.8 : 16.6  正文 */
+  --pp-ink-2: #545c6b; /*  6.7 :  6.3  次级文字 */
+  --pp-ink-3: #5f6f83; /*  5.1 :  4.8  说明 / 占位符(AA 下沿,不得再浅) */
+  --pp-ink-faint: #c2c8d3; /*  仅装饰,不承载信息 */
+
+  /* ── 面 ──────────────────────────────────────────── */
+  --pp-bg-page: #f6f8fb;
+  --pp-bg-surface: #ffffff;
+  --pp-bg-sunken: #f9fafc;
+
+  /* ── 唯一强调色 ──────────────────────────────────── */
+  --pp-accent: #2563eb; /* 白底 5.2:1;实底按钮白字 5.2:1(EP 默认的 #409EFF 只有 3.0:1) */
+  --pp-accent-deep: #1e4fbc; /* 浅蓝底上的文字 6.3:1;按钮 hover 底 */
+  --pp-accent-soft: #e9effd;
+  --pp-accent-line: #c9d9fa;
+
+  /* ── 权重梯 w1–w5:文字恒为 --pp-w-ink,强度只由底色 + 刻度表达 ── */
+  --pp-w-ink: #1e4fbc;
+  --pp-w1-bg: #edf2fe; --pp-w1-bd: #d8e3fc;
+  --pp-w2-bg: #e9effd; --pp-w2-bd: #c9d9fa;
+  --pp-w3-bg: #dce7fc; --pp-w3-bd: #b9cdf9;
+  --pp-w4-bg: #d3e0fb; --pp-w4-bd: #2563eb;
+  --pp-w5-bg: #c2d3f9; --pp-w5-bd: #2563eb;
+  --pp-w-off: rgba(30, 79, 188, 0.32); /* 未点亮格;与亮格在五档底色上对比 ≥3:1 */
+
+  /* ── 线 ──────────────────────────────────────────── */
+  --pp-line: #e8eaef;
+  --pp-line-strong: #d5d9e2;
+  --pp-line-hover: #a9b1bf;
+
+  /* ── 语义色(只作文字与 1px 边,不做大色块) ──────── */
+  --pp-danger: #b42318;
+  --pp-danger-soft: #fef3f2;
+  --pp-success: #067647;
+  --pp-warning: #b54708;
+
+  /* ── 圆角 / 间距(4px 基数)/ 字号 ────────────────── */
+  --pp-radius-xs: 3px;
+  --pp-radius-sm: 4px;
+  --pp-radius-md: 6px;
+  --pp-radius-lg: 10px;
+  --pp-radius-pill: 999px;
+
+  --pp-space-1: 4px;  --pp-space-2: 8px;   --pp-space-3: 12px;
+  --pp-space-4: 16px; --pp-space-5: 20px;  --pp-space-6: 24px;
+  --pp-space-8: 32px; --pp-space-10: 40px; --pp-space-12: 48px;
+  --pp-space-16: 64px;
+
+  --pp-text-xs: 12px; --pp-text-sm: 13px; --pp-text-base: 14px;
+  --pp-text-md: 15px; --pp-text-lg: 18px; --pp-text-xl: 22px;
+  --pp-text-2xl: 28px;
+  --pp-leading: 1.55;
+  --pp-leading-tight: 1.3;
+  --pp-tracking-tight: -0.01em;
+  --pp-weight-regular: 400; --pp-weight-medium: 500; --pp-weight-semibold: 600;
+
+  /* ── 阴影:极简方向几乎不用,仅浮层允许 ──────────── */
+  --pp-shadow-card: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --pp-shadow-overlay: 0 12px 32px -16px rgba(16, 24, 40, 0.18);
+  --pp-ring: 0 0 0 3px rgba(37, 99, 235, 0.16);
+  --pp-ring-danger: 0 0 0 3px rgba(180, 35, 24, 0.12);
+
+  /* ── 动效:只过渡颜色 / 边框 / 进度宽度,不做位移缩放 ── */
+  --pp-dur: 0.15s;
+  --pp-ease: cubic-bezier(0.2, 0.6, 0.2, 1);
+
+  /* ── 布局 ────────────────────────────────────────── */
+  --pp-topbar-h: 56px;
+  --pp-content-max: 1040px;
+  --pp-control-h: 36px;
+  --pp-control-h-lg: 40px;
+}
+
+/* ============================================================
+   Element Plus 变量覆盖
+   light-N = 与白色 N×10% 混合,与 EP 自身的派生规则一致,预先算好写死
+   ============================================================ */
+:root:root {
+  --el-color-primary: #2563eb;
+  --el-color-primary-light-3: #6692f1;
+  --el-color-primary-light-5: #92b1f5;
+  --el-color-primary-light-7: #bed0f9;
+  --el-color-primary-light-8: #d3e0fb;
+  --el-color-primary-light-9: #e9effd;
+  --el-color-primary-dark-2: #1e4fbc;
+
+  --el-color-success: #067647; --el-color-success-light-9: #e6f1ed;
+  --el-color-warning: #b54708; --el-color-warning-light-9: #f8ede6;
+  --el-color-danger: #b42318;  --el-color-danger-light-9: #f8e9e8;
+  --el-color-error: #b42318;   --el-color-error-light-9: #f8e9e8;
+  --el-color-info: #5f6f83;    --el-color-info-light-9: #f0f1f3;
+
+  --el-font-family: var(--pp-font-sans);
+  --el-font-size-base: 14px;
+  --el-font-size-small: 13px;
+  --el-font-size-extra-small: 12px;
+  --el-font-size-large: 15px;
+  --el-font-weight-primary: 500;
+
+  --el-border-radius-base: 6px;
+  --el-border-radius-small: 4px;
+  --el-border-radius-round: 999px;
+
+  /* 占位符用 5.1:1,替掉 EP 默认约 2.5:1 的 #a8abb2 */
+  --el-text-color-primary: #16181d;
+  --el-text-color-regular: #545c6b;
+  --el-text-color-secondary: #5f6f83;
+  --el-text-color-placeholder: #5f6f83;
+  --el-text-color-disabled: #a9b1bf;
+
+  --el-border-color: #d5d9e2;
+  --el-border-color-light: #e8eaef;
+  --el-border-color-lighter: #eff1f5;
+  --el-border-color-extra-light: #f5f6f9;
+  --el-border-color-dark: #c2c8d3;
+  --el-border-color-darker: #a9b1bf;
+  --el-border-color-hover: #a9b1bf;
+
+  --el-bg-color: #ffffff;
+  --el-bg-color-page: #f6f8fb;
+  --el-bg-color-overlay: #ffffff;
+  --el-fill-color: #f6f8fb;
+  --el-fill-color-light: #f9fafc;
+  --el-fill-color-lighter: #fbfcfd;
+  --el-fill-color-extra-light: #fdfdfe;
+  --el-fill-color-blank: #ffffff;
+  --el-mask-color: rgba(22, 24, 29, 0.32);
+
+  --el-box-shadow: var(--pp-shadow-overlay);
+  --el-box-shadow-light: 0 2px 8px -4px rgba(16, 24, 40, 0.1);
+  --el-box-shadow-lighter: var(--pp-shadow-card);
+  --el-box-shadow-dark: 0 16px 40px -20px rgba(16, 24, 40, 0.22);
+
+  --el-component-size-large: 40px;
+  --el-component-size: 36px;
+  --el-component-size-small: 28px;
+  --el-transition-duration: 0.15s;
+  --el-transition-duration-fast: 0.12s;
+
+  --el-card-border-color: #e8eaef;
+  --el-card-padding: 20px;
+  --el-link-text-color: #545c6b;
+  --el-link-hover-text-color: #2563eb;
+  --el-disabled-bg-color: #f9fafc;
+  --el-disabled-text-color: #a9b1bf;
+  --el-disabled-border-color: #e8eaef;
+  --el-overlay-color-lighter: rgba(22, 24, 29, 0.32);
+}
+
+/* ============================================================
+   变量之外必须逐组件补的几处 —— 缺一即"回默认 Element 味"
+   前缀 `:root` 是为了压过 EP 自身的 (0,1,0) 规则,与样式加载顺序无关
+   ============================================================ */
+
+/* 1. 输入框:EP 的 focus 只有 1px 内描边,3px 外环必须自己叠 */
+:root .el-input__wrapper {
+  box-shadow: 0 0 0 1px var(--pp-line-strong) inset;
+  transition: box-shadow var(--pp-dur) var(--pp-ease);
+}
+:root .el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px var(--pp-line-hover) inset;
+}
+:root .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--pp-accent) inset, var(--pp-ring);
+}
+:root .el-form-item.is-error .el-input__wrapper {
+  box-shadow: 0 0 0 1px var(--pp-danger) inset;
+}
+:root .el-form-item.is-error .el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px var(--pp-danger) inset, var(--pp-ring-danger);
+}
+
+/* 2. 主按钮:EP 默认 hover 走 light-3 变浅,与本设计"hover 变深"相反 */
+:root .el-button--primary {
+  --el-button-hover-bg-color: var(--pp-accent-deep);
+  --el-button-hover-border-color: var(--pp-accent-deep);
+  --el-button-active-bg-color: #1a44a3;
+  --el-button-active-border-color: #1a44a3;
+}
+:root .el-button--primary:focus-visible {
+  box-shadow: var(--pp-ring);
+}
+
+/* 3. 卡片:EP 的 el-card 默认带阴影 */
+:root .el-card {
+  box-shadow: none;
+  border: 1px solid var(--pp-line);
+  border-radius: var(--pp-radius-lg);
+}
+
+/* 4. 表单:标签压在输入框上方 */
+:root .el-form-item__label {
+  font-size: var(--pp-text-sm);
+  font-weight: var(--pp-weight-medium);
+  color: var(--pp-ink-2);
+  padding-bottom: 6px;
+  line-height: 1.4;
+}
+:root .el-form-item__error {
+  font-size: var(--pp-text-xs);
+  padding-top: 6px;
+}
+:root .el-form-item {
+  margin-bottom: var(--pp-space-4);
+}

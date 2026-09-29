@@ -31,5 +31,13 @@ export default defineConfig({
   preview: { proxy },
   test: {
     environment: 'jsdom',
+    server: {
+      deps: {
+        // Element Plus 按需引入会给每个组件注入 .css 的 import。
+        // 若被当作外部依赖交给 Node 直接加载,Node 不认识 .css 会直接报错;
+        // 内联后交给 Vite 的管线处理就没问题。
+        inline: ['element-plus'],
+      },
+    },
   },
 })

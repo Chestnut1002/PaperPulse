@@ -1,0 +1,309 @@
+/* ============================================================
+   PaperPulse 共享 UI 类
+   只在多个视图之间复用的才放这里;单个视图自己的布局写在 .vue 的 scoped 样式里。
+   依赖 theme.css 的 --pp-* 令牌。
+   ============================================================ */
+
+/* ---------- 品牌标记:全站唯一的图形装饰(脉冲折线) ---------- */
+.brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pp-space-2);
+  font-size: var(--pp-text-md);
+  font-weight: var(--pp-weight-semibold);
+  letter-spacing: var(--pp-tracking-tight);
+  color: var(--pp-ink);
+}
+
+.mark {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  color: var(--pp-accent);
+  border: 1px solid var(--pp-accent-line);
+  border-radius: var(--pp-radius-md);
+}
+
+.mark--sm {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--pp-radius-sm);
+}
+
+/* ---------- 卡片 ---------- */
+.card {
+  background: var(--pp-bg-surface);
+  border: 1px solid var(--pp-line);
+  border-radius: var(--pp-radius-lg);
+  padding: var(--pp-space-5) var(--pp-space-6);
+}
+
+.card__head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--pp-space-4);
+}
+
+.card__head h2 {
+  margin: 0;
+  font-size: var(--pp-text-md);
+  font-weight: var(--pp-weight-semibold);
+}
+
+.card__meta {
+  font-size: var(--pp-text-xs);
+  color: var(--pp-ink-3);
+}
+
+/* ---------- 链接与纯文本按钮 ---------- */
+.link {
+  color: var(--pp-accent);
+  font-size: var(--pp-text-sm);
+  text-decoration: none;
+  transition: color var(--pp-dur) var(--pp-ease);
+}
+
+.link:hover {
+  color: var(--pp-accent-deep);
+  text-decoration: underline;
+}
+
+/* 比 el-button link 更安静:不抢主色,用于「退出登录」「清空」这类次要动作 */
+.linkbtn {
+  padding: var(--pp-space-1) 2px;
+  border: 0;
+  background: none;
+  color: var(--pp-ink-3);
+  font-family: inherit;
+  font-size: var(--pp-text-sm);
+  cursor: pointer;
+  transition: color var(--pp-dur) var(--pp-ease);
+}
+
+.linkbtn:hover {
+  color: var(--pp-ink);
+  text-decoration: underline;
+}
+
+.linkbtn:focus-visible {
+  outline: none;
+  box-shadow: var(--pp-ring);
+  border-radius: var(--pp-radius-sm);
+}
+
+.linkbtn:disabled {
+  color: var(--pp-ink-faint);
+  cursor: not-allowed;
+  text-decoration: none;
+}
+
+/* ---------- 接口级错误条(401 / 网络不可达) ---------- */
+/* 刻意不用 ElMessage 兜底:一次性的浮层提示容易被漏看 */
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--pp-space-2);
+  margin: 0 0 var(--pp-space-5);
+  padding: 10px var(--pp-space-3);
+  background: var(--pp-danger-soft);
+  border: 1px solid var(--pp-danger);
+  border-radius: var(--pp-radius-md);
+  color: var(--pp-danger);
+  font-size: var(--pp-text-xs);
+  line-height: 1.5;
+}
+
+.alert::before {
+  content: '';
+  width: 12px;
+  height: 12px;
+  margin-top: 3px;
+  flex: none;
+  border: 1px solid var(--pp-danger);
+  border-radius: var(--pp-radius-pill);
+}
+
+/* 正向提示条(注册成功之类):与错误条同形状,换语义色 */
+.notice {
+  display: flex;
+  align-items: flex-start;
+  margin: 0 0 var(--pp-space-5);
+  padding: 10px var(--pp-space-3);
+  background: #e6f1ed;
+  border: 1px solid var(--pp-success);
+  border-radius: var(--pp-radius-md);
+  color: var(--pp-success);
+  font-size: var(--pp-text-xs);
+  line-height: 1.5;
+}
+
+/* ---------- 头像 ---------- */
+.avatar {
+  display: grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: var(--pp-radius-pill);
+  background: var(--pp-accent-soft);
+  color: var(--pp-accent-deep);
+  font-size: var(--pp-text-xs);
+  font-weight: var(--pp-weight-semibold);
+}
+
+/* ---------- 页头 ---------- */
+.page-head h1 {
+  margin: 0;
+  font-size: var(--pp-text-xl);
+  font-weight: var(--pp-weight-semibold);
+  letter-spacing: var(--pp-tracking-tight);
+}
+
+.page-head p {
+  margin: 6px 0 0;
+  font-size: var(--pp-text-sm);
+  color: var(--pp-ink-3);
+}
+
+/* ---------- 登录 / 注册页共用的文字样式 ---------- */
+.auth__title {
+  margin: var(--pp-space-8) 0 var(--pp-space-1);
+  font-size: var(--pp-text-xl);
+  font-weight: var(--pp-weight-semibold);
+  letter-spacing: var(--pp-tracking-tight);
+  line-height: var(--pp-leading-tight);
+}
+
+.auth__sub {
+  margin: 0 0 var(--pp-space-6);
+  font-size: var(--pp-text-sm);
+  color: var(--pp-ink-3);
+}
+
+.auth__switch {
+  margin: var(--pp-space-6) 0 0;
+  font-size: var(--pp-text-sm);
+  color: var(--pp-ink-3);
+  text-align: center;
+}
+
+/* ============================================================
+   兴趣标签 chip 与权重刻度
+   权重用三条通道表达,不允许"只靠颜色":
+     ① 文字色恒定(--pp-w-ink)  ② 底色五档  ③ 刻度格数
+   ============================================================ */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--pp-space-2);
+  height: 34px;
+  padding: 0 var(--pp-space-3);
+  background: var(--pp-bg-surface);
+  border: 1px solid var(--pp-line-strong);
+  border-radius: var(--pp-radius-pill);
+  color: var(--pp-ink-2);
+  font-family: inherit;
+  font-size: var(--pp-text-sm);
+  line-height: 1;
+  cursor: pointer;
+  user-select: none;
+  transition:
+    background var(--pp-dur) var(--pp-ease),
+    border-color var(--pp-dur) var(--pp-ease),
+    color var(--pp-dur) var(--pp-ease);
+}
+
+/* 悬停只强化描边与文字,绝不加深底色 —— 否则与「已选 w1」混淆 */
+.tag:hover {
+  border-color: var(--pp-line-hover);
+  color: var(--pp-ink);
+}
+
+.tag:focus-visible {
+  outline: none;
+  box-shadow: var(--pp-ring);
+}
+
+.tag.is-on {
+  color: var(--pp-w-ink);
+  font-weight: var(--pp-weight-medium);
+}
+
+.tag.is-on[data-w='1'] { background: var(--pp-w1-bg); border-color: var(--pp-w1-bd); }
+.tag.is-on[data-w='2'] { background: var(--pp-w2-bg); border-color: var(--pp-w2-bd); }
+.tag.is-on[data-w='3'] { background: var(--pp-w3-bg); border-color: var(--pp-w3-bd); }
+.tag.is-on[data-w='4'] { background: var(--pp-w4-bg); border-color: var(--pp-w4-bd); }
+.tag.is-on[data-w='5'] { background: var(--pp-w5-bg); border-color: var(--pp-w5-bd); }
+
+.tag.is-on:hover {
+  border-color: var(--pp-accent-deep);
+}
+
+/* 达到上限后,未选标签降权(而不是弹窗) */
+.tag.is-locked {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.tag--mini {
+  height: 28px;
+  padding: 0 10px;
+  gap: 6px;
+  font-size: var(--pp-text-xs);
+}
+
+.tag--static {
+  cursor: default;
+}
+
+/* 刻度:5 格,点亮格数 = 权重 */
+.ticks {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex: none;
+}
+
+.ticks--lead {
+  padding-left: 4px;
+}
+
+.ticks--mini {
+  gap: 2px;
+}
+
+.seg {
+  position: relative;
+  width: 4px;
+  height: 10px;
+  border-radius: 1px;
+  background: var(--pp-w-off);
+  transition: background var(--pp-dur) var(--pp-ease);
+}
+
+/* 命中区扩到整个格距(4px 实条 + 左右各 1.5px),鼠标不必精确瞄 4px 宽的条 */
+.seg::before {
+  content: '';
+  position: absolute;
+  top: -7px;
+  bottom: -7px;
+  left: -1.5px;
+  right: -1.5px;
+}
+
+/* 亮格用 accent-deep:与未亮格在五档底色上的对比 ≥3:1 */
+.seg.is-on {
+  background: var(--pp-accent-deep);
+}
+
+.ticks--mini .seg {
+  width: 3px;
+  height: 8px;
+}
+
+.ticks--mini .seg::before {
+  content: none;
+}

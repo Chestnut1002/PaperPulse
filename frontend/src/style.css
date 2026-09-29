@@ -1,4 +1,6 @@
-/* 全局基础样式。组件自己的样式写在各自的 .vue 里,不要往这里堆。 */
+/* 全局基础样式:只放重置与文档级默认值。
+   设计令牌见 styles/theme.css,共享组件类见 styles/components.css,
+   单个视图自己的布局写在各自的 .vue 里。 */
 
 * {
   box-sizing: border-box;
@@ -12,8 +14,11 @@ body,
 }
 
 body {
-  background: #f5f7fa;
-  color: #303133;
-  font-family: system-ui, -apple-system, 'Segoe UI', 'Microsoft YaHei', sans-serif;
+  background: var(--pp-bg-page, #f6f8fb);
+  color: var(--pp-ink, #16181d);
+  font-family: var(--pp-font-sans, system-ui, sans-serif);
+  font-size: var(--pp-text-base, 14px);
+  line-height: var(--pp-leading, 1.55);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
 }
