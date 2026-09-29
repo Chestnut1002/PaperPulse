@@ -2170,6 +2170,126 @@ npm run build → ✓ built in 428ms,无告警
   2. **REQ-004 个性化推荐**:检索与行为数据都已就位,可以做了
   3. 预印本 / 正式版的重复:需要单独方案,风险高
   4. 把"用户是否还在"的校验收进过滤器:已经第三次逐接口补了,见上一节的记录
+
+# 2026-09-30(第三次)
+
+## 本次目标
+
+接入 arXiv 数据源。起因是用户问「搜索到的论文只能从 Semantic Scholar 获取吗」——
+顺着这个问题实测发现**网络变了**,并据此调整了原来的判断。
+
+## 完成内容
+
+- **接入 arXiv**(第三个数据源),放在 S2 与 Crossref 之间
+- **检索主流程从「谁先返回结果就用谁」改成「并发查所有源,再交织合并」** ——
+  三个源各有所长,只取一个等于主动丢掉另外两个的覆盖
+- arXiv 条目映射:Atom XML 解析、**版本号剥离**、`journal_ref` 当期刊名、
+  作者登记的 DOI 顺手取用
+- 删掉了不再使用的 `_dedupe`(合并时已按身份去重)
+
+## 修改文件
+
+| 文件 | 修改 |
+| ---- | ---- |
+| `ai-service/app/sources.py` | 加 arXiv 源与映射;`_fetch_text` 拆出;`search_papers` 改为并发 + 交织合并 |
+| `ai-service/tests/test_sources.py` | 加 13 条(arXiv 映射 8 条、合并逻辑 5 条),删掉 `_dedupe` 的用例 |
+| `backend/.../paper/PaperSource.java` | `ARXIV` 的注释更新(原先写着"API 在本机不可达") |
+| `scratch/source_probe.py` | 新增:数据源可达性探测(选型前先跑一次,别凭记忆) |
+
+## 技术方案
+
+### 1. 为什么不能只"加一个源"
+
+原来的降级链是**按顺序试,谁先返回结果就用谁**。三个源用这套逻辑会失效:
+
+- 放前面 → 它的结果垄断整个列表,另外两个形同虚设
+- 放后面 → 前面那个几乎总能返回结果,它永远轮不上
+
+所以改成**并发查所有源,结果按轮转交织**。这也是上一节末尾提到的"源多了以后这套逻辑会显得粗糙"。
+
+### 2. 为什么用轮转而不是按相关度排序
+
+各源的分数**量纲完全不同**:S2 给 0~1 的相关性,Crossref 给一个无上界的 score,
+arXiv 干脆只给顺序、没有分数。跨源比较这些数字没有意义。
+轮转保留各源自己的顺序,也不需要归一化。
+
+### 3. 顺带快了
+
+并发之后**一次检索从 10.2 秒降到 4.5 秒** —— 原来串行等一个源,现在是等最慢的那个。
+
+## 遇到问题
+
+### 问题一:关键词整句加引号会变成精确短语,命中 0 条
+
+实测同一组关键词:
+
+| 写法 | 命中总数 |
+| ---- | ---- |
+| `all:contrastive learning recommender systems` | **1,293,945** |
+| `all:"contrastive learning recommender systems"` | **0** |
+
+加引号在 arXiv 语法里是**精确短语匹配**,整句作为短语几乎不存在。
+不加引号才是"各词 AND"。**差一个字,结果从一百万条变成零条。**
+
+### 问题二:arXiv 的 ID 带版本号
+
+`2502.19271v1` / `2502.19271v2` 是**同一篇论文的不同修订**,而 arXiv 上修版很常见。
+不剥掉版本后缀,每次修订都会被当成新论文存一行。
+
+### 问题三(预期落空,但有价值):arXiv 的正式发表 DOI 只有约一成
+
+原本设想:arXiv 对已正式发表的论文会给期刊 DOI,那接它就能顺手解决"预印本 vs 正式版"的重复。
+
+**实测**:`cs.IR` 最新 100 篇里只有 **10 篇**带这个字段,包括那篇确定已发表在 NeurIPS 的
+《Attention Is All You Need》都是空的 —— 这个字段只在作者主动登记时才有值。
+
+所以这条路走不通,**预印本合并仍然是个未解问题**;而且接了 arXiv 之后它会更容易撞上
+(同一个搜索里就可能同时出现预印本和正式版)。已记为下一步的高优先级事项。
+
+### 问题四:网络变了,旧结论过期了
+
+实测:`export.arxiv.org`(arXiv 官方 API)和 OpenAlex **现在都通了**,
+而 9-16 的记录写的是"不可达"。当时正是因为这个,检索才改用 S2 + Crossref。
+
+**处理**:把这几个源的探测写成了 `scratch/source_probe.py`,选型前先跑一次。
+凭记忆里的网络结论做技术选型,会踩空。
+
+## 测试结果
+
+### Python(58 条,新增 13)
+
+arXiv 映射 8 条(版本号剥离、无 DOI 是常态、字段缺失的兜底、换行压缩)、
+合并逻辑 5 条(轮转顺序、同身份去重、**同 DOI 跨源去重**、
+**不同 DOI 的同名论文不合并**、达到上限即停)。
+
+### 端到端(21 项)
+
+```
+python scratch/search_smoke.py
+共 21 项,通过 21,失败 0
+```
+
+实测一次检索:
+
+```
+耗时 4.5 秒
+贡献来源:Semantic Scholar、arXiv、Crossref
+  semantic_scholar 2025  Enhancing robustness in implicit feedback recommender sy…
+  arxiv            2024  Towards Automated Model Design on Recommender Systems
+  crossref         2026  GenGCL: Generative Graph Contrastive Learning for Enhanc…
+  semantic_scholar 2025  Multiview graph dual-attention deep learning and contras…
+  arxiv            2025  On the Similarities of Embeddings in Contrastive Learnin…
+  crossref         2026  Disentangling Context from Auxiliary Information: Contra…
+```
+
+三次检索结果不重叠的部分按来源交替,id 保持稳定,没有重复入库。
+
+## 下一步计划
+
+1. **预印本 / 正式版的重复** —— 接 arXiv 之后这件事从"待办"变成"会经常撞上"。
+   已确认无法靠 arXiv 的 DOI 字段解决,需要单独评估方案(模糊匹配的风险要一并说明)
+2. **接 OpenAlex** —— 它 DOI 齐全、覆盖最广,能补上前两者都缺的
+3. REQ-003 精读问答 / REQ-004 个性化推荐
 - **FE-3 收藏 / 历史 / 评分管理页**
 - `GET /api/interests` 的鉴权缺口(仍未修)
 - 开发库里还留着十几个测试账号与论文,需要时清一次

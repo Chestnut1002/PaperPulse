@@ -9,8 +9,11 @@
 """
 
 import html
+import json
 import re
 import time
+import xml.etree.ElementTree as ET
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Callable
 
@@ -20,6 +23,11 @@ from . import config
 
 SEMANTIC_SCHOLAR_API = "https://api.semanticscholar.org/graph/v1/paper/search"
 CROSSREF_API = "https://api.crossref.org/works"
+ARXIV_API = "https://export.arxiv.org/api/query"
+
+# arXiv 返回的是 Atom XML,元素都带命名空间
+ATOM = "{http://www.w3.org/2005/Atom}"
+ARXIV_NS = "{http://arxiv.org/schemas/atom}"
 
 # 每次检索最多重试几次(仅针对限流)
 _RETRIES = 2
@@ -41,7 +49,11 @@ class Source:
 
 @dataclass(frozen=True)
 class SearchOutcome:
-    """检索结果 + 实际命中的是哪个源(降级链走到哪就是谁)。"""
+    """检索结果 + 实际贡献了结果的源。
+
+    `source_label` 可能是多个源的组合(如 `arXiv、Crossref`)—— 现在会同时查所有源再合并,
+    不像以前"谁先返回结果就只用谁"。
+    """
 
     source_label: str
     papers: list[dict]
@@ -58,8 +70,12 @@ def _headers() -> dict:
     return headers
 
 
-def _fetch(url: str, params: dict, source_label: str) -> dict:
-    """发一次 GET 并返回 JSON。被限流就等一会儿重试,其它错误直接抛。"""
+def _fetch_text(url: str, params: dict, source_label: str) -> str:
+    """发一次 GET 并返回原始文本。被限流就等一会儿重试,其它错误直接抛。
+
+    返回文本而不是解析好的对象:各源的响应格式不一样(JSON / Atom XML),
+    解析留给各自的映射函数,这里只管"把字节拿回来"。
+    """
     last_error = ""
     for attempt in range(_RETRIES):
         try:
@@ -74,7 +90,7 @@ def _fetch(url: str, params: dict, source_label: str) -> dict:
             continue
 
         if response.status_code == 200:
-            return response.json()
+            return response.text
 
         last_error = f"HTTP {response.status_code}"
         if response.status_code == 429 and attempt < _RETRIES - 1:
@@ -83,6 +99,11 @@ def _fetch(url: str, params: dict, source_label: str) -> dict:
         raise RuntimeError(f"{source_label} 返回 {last_error}")
 
     raise RuntimeError(f"{source_label} 重试后仍然失败:{last_error}")
+
+
+def _fetch(url: str, params: dict, source_label: str) -> dict:
+    """发一次 GET 并把响应解析成 JSON。"""
+    return json.loads(_fetch_text(url, params, source_label))
 
 
 def _clean_text(raw: str | None) -> str | None:
@@ -129,19 +150,6 @@ def _in_year_range(year: int | None, year_from: int | None, year_to: int | None)
     if year_to is not None and year > year_to:
         return False
     return True
-
-
-def _dedupe(papers: list[dict]) -> list[dict]:
-    """按 externalId 去重,保留先出现的(顺序即相关度顺序)。"""
-    seen: set[str] = set()
-    unique = []
-    for paper in papers:
-        external_id = paper["externalId"]
-        if external_id in seen:
-            continue
-        seen.add(external_id)
-        unique.append(paper)
-    return unique
 
 
 _DOI_PREFIXES = ("https://doi.org/", "http://doi.org/", "doi:")
@@ -272,8 +280,82 @@ def search_crossref(keywords: str, limit: int,
                     year_from, year_to)
 
 
+def _strip_arxiv_version(arxiv_id: str) -> str:
+    """去掉版本后缀。
+
+    同一篇论文的 v1 / v2 是**同一篇**,带着版本号落库会把每次修订存成新的一行 ——
+    而 arXiv 上修版很常见。
+    """
+    return re.sub(r"v\d+$", "", arxiv_id.strip())
+
+
+def arxiv_to_paper(entry: ET.Element) -> dict | None:
+    """把 arXiv 的一条 Atom 条目映射成统一的论文形状。
+
+    arXiv 没有引用数,也没有"会议/期刊"字段(只有作者自愿登记的 `journal_ref`),
+    所以那两项留空 —— 缺字段是不可接受的?不,是**如实反映**:它确实不提供。
+    """
+    raw_id = _non_empty(entry.findtext(f"{ATOM}id"))
+    if raw_id is None:
+        return None
+
+    # <id> 是个 URL,形如 http://arxiv.org/abs/2502.19271v1
+    arxiv_id = _strip_arxiv_version(raw_id.rsplit("/abs/", 1)[-1])
+    if not arxiv_id:
+        return None
+
+    published = _non_empty(entry.findtext(f"{ATOM}published")) or ""
+    year = int(published[:4]) if published[:4].isdigit() else None
+
+    return {
+        "source": "arxiv",
+        "externalId": arxiv_id,
+        "title": _clean_text(entry.findtext(f"{ATOM}title")) or "(无标题)",
+        "authors": [
+            name
+            for author in entry.findall(f"{ATOM}author")
+            if (name := _clean_text(author.findtext(f"{ATOM}name")))
+        ],
+        "abstractText": _clean_text(entry.findtext(f"{ATOM}summary")),
+        "publicationYear": year,
+        "venue": _clean_text(entry.findtext(f"{ARXIV_NS}journal_ref")),
+        # 作者自愿登记的正式发表 DOI,实测只有约一成的论文有 —— 有就用,没有就算了
+        "doi": normalize_doi(entry.findtext(f"{ARXIV_NS}doi")),
+        "url": raw_id,
+        "citationCount": 0,
+    }
+
+
+def search_arxiv(keywords: str, limit: int,
+                 year_from: int | None, year_to: int | None) -> list[dict]:
+    # 关键词**不加引号**:加了会变成精确短语匹配(实测「contrastive learning
+    # recommender systems」整句加引号命中 0 条),不加则是各词 AND。
+    query = f"all:{keywords}"
+    if year_from is not None or year_to is not None:
+        start = f"{year_from or 1991}01010000"
+        end = f"{year_to or 2999}12312359"
+        query = f"{query} AND submittedDate:[{start} TO {end}]"
+
+    text = _fetch_text(
+        ARXIV_API,
+        {"search_query": query, "max_results": limit, "sortBy": "relevance"},
+        "arXiv",
+    )
+
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as exc:
+        raise RuntimeError(f"arXiv 返回的不是合法 XML:{exc}") from exc
+
+    return _collect([arxiv_to_paper(entry) for entry in root.findall(f"{ATOM}entry")],
+                    year_from, year_to)
+
+
 SOURCES: list[Source] = [
+    # 顺序 = 结果列表里的交织顺序。按"元数据丰富度"排,失败的自然被跳过,
+    # 所以 S2 限流时 arXiv 会顶到最前面,不需要另写降级逻辑。
     Source("semantic_scholar", "Semantic Scholar", search_semantic_scholar),
+    Source("arxiv", "arXiv", search_arxiv),
     Source("crossref", "Crossref", search_crossref),
 ]
 
@@ -281,19 +363,78 @@ SOURCES: list[Source] = [
 # ---------------------------------------------------------------- 对外接口
 
 
+def _interleave(outcomes: list[tuple[str, list[dict]]],
+                limit: int) -> tuple[list[str], list[dict]]:
+    """把各源的结果按轮转交织,并按身份去重。
+
+    <p>**为什么用轮转而不是按相关度排序**:各源的分数**量纲完全不同** ——
+    S2 给 0~1 的相关性,Crossref 给一个无上界的 score,arXiv 只给顺序没有分数。
+    跨源比较这些数字没有意义。轮转保留各源自己的顺序,也不需要归一化。
+
+    <p>去重做两遍:同一 `(来源, 外部 ID)` 不重复;同一 DOI 不重复(跨源的同一篇论文)。
+    **只做精确匹配** —— 不按标题猜,猜错会把两篇不同的论文合并掉。
+    """
+    queues = [list(papers) for _, papers in outcomes]
+
+    merged: list[dict] = []
+    used_labels: list[str] = []
+    seen_external: set[tuple[str, str]] = set()
+    seen_doi: set[str] = set()
+
+    while len(merged) < limit and any(queues):
+        for index, queue in enumerate(queues):
+            if not queue:
+                continue
+
+            paper = queue.pop(0)
+            key = (paper["source"], paper["externalId"])
+            doi = paper.get("doi")
+            if key in seen_external or (doi is not None and doi in seen_doi):
+                continue
+
+            seen_external.add(key)
+            if doi is not None:
+                seen_doi.add(doi)
+            merged.append(paper)
+
+            label = outcomes[index][0]
+            if label not in used_labels:
+                used_labels.append(label)
+
+            if len(merged) >= limit:
+                break
+
+    return used_labels, merged
+
+
 def search_papers(keywords: str, limit: int = config.DEFAULT_LIMIT,
                   year_from: int | None = None, year_to: int | None = None) -> SearchOutcome:
-    """按关键词检索论文。依次尝试各个数据源,谁先给出结果就用谁。"""
-    errors = []
-    for source in SOURCES:
-        try:
-            papers = source.search(keywords, limit, year_from, year_to)
-        except RuntimeError as exc:
-            errors.append(f"{source.label}:{exc}")
-            continue
+    """**并发**查所有数据源,再把结果合并。
 
-        if papers:
-            return SearchOutcome(source.label, _dedupe(papers))
-        errors.append(f"{source.label}:无结果")
+    <p>不再"谁先返回结果就用谁":各个源各有所长 —— S2 有引用数、arXiv 有最新的预印本、
+    Crossref 最稳且 DOI 齐全 —— 只取一个等于主动丢掉另外两个的覆盖。
 
-    raise AllSourcesFailed("所有数据源都没能返回结果 → " + " | ".join(errors))
+    <p>串行查三个源最坏要等 75 秒(各自超时 25 秒),所以并发。
+    某个源挂了不影响其余,它只是不出现在结果里。
+    """
+    with ThreadPoolExecutor(max_workers=len(SOURCES)) as pool:
+        # 按 SOURCES 的顺序提交与收集,保证交织的顺序是确定的
+        futures = [(source, pool.submit(source.search, keywords, limit, year_from, year_to))
+                   for source in SOURCES]
+
+        outcomes: list[tuple[str, list[dict]]] = []
+        errors: list[str] = []
+        for source, future in futures:
+            try:
+                papers = future.result()
+            except RuntimeError as exc:
+                errors.append(f"{source.label}:{exc}")
+                continue
+            if papers:
+                outcomes.append((source.label, papers))
+
+    if not outcomes:
+        raise AllSourcesFailed("所有数据源都没能返回结果 → " + " | ".join(errors))
+
+    labels, papers = _interleave(outcomes, limit)
+    return SearchOutcome("、".join(labels), papers)

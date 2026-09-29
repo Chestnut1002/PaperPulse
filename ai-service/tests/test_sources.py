@@ -1,10 +1,13 @@
-"""检索数据源的纯逻辑:归一化、年份过滤、去重、条目映射。不联网。"""
+"""检索数据源的纯逻辑:归一化、年份过滤、条目映射、多源合并。不联网。"""
+
+import xml.etree.ElementTree as ET
 
 from app.sources import (
     _clean_text,
-    _dedupe,
     _in_year_range,
+    _interleave,
     _non_empty,
+    arxiv_to_paper,
     crossref_to_paper,
     normalize_doi,
     semantic_scholar_to_paper,
@@ -35,17 +38,132 @@ class TestYearRange:
         assert _in_year_range(None, None, None) is True
 
 
-class TestDedupe:
-    def test_按_externalId_去重并保留先出现的(self):
-        papers = [
-            {"externalId": "a", "title": "第一篇"},
-            {"externalId": "b", "title": "第二篇"},
-            {"externalId": "a", "title": "重复"},
-        ]
-        assert [p["title"] for p in _dedupe(papers)] == ["第一篇", "第二篇"]
+def atom_entry(body: str) -> ET.Element:
+    """拼一个 arXiv 风格的 Atom 条目(带命名空间,和真实响应一致)。"""
+    return ET.fromstring(
+        '<entry xmlns="http://www.w3.org/2005/Atom" '
+        'xmlns:arxiv="http://arxiv.org/schemas/atom">' + body + "</entry>"
+    )
 
-    def test_空列表(self):
-        assert _dedupe([]) == []
+
+ARXIV_ENTRY = atom_entry("""
+  <id>http://arxiv.org/abs/2502.19271v2</id>
+  <published>2025-02-26T00:00:00Z</published>
+  <title>Multi-view  Contrastive
+     Learning for Recommendation</title>
+  <summary>An abstract from arXiv.</summary>
+  <author><name>Alice</name></author>
+  <author><name>Bob</name></author>
+  <arxiv:journal_ref>NeurIPS 2025</arxiv:journal_ref>
+""")
+
+
+class TestArxivMapping:
+    def test_字段映射完整(self):
+        paper = arxiv_to_paper(ARXIV_ENTRY)
+
+        assert paper["source"] == "arxiv"
+        assert paper["title"] == "Multi-view Contrastive Learning for Recommendation"
+        assert paper["authors"] == ["Alice", "Bob"]
+        assert paper["abstractText"] == "An abstract from arXiv."
+        assert paper["publicationYear"] == 2025
+        assert paper["venue"] == "NeurIPS 2025"
+        assert paper["url"] == "http://arxiv.org/abs/2502.19271v2"
+
+    def test_剥掉版本号(self):
+        # 同一篇论文的 v1/v2 是同一篇 —— 带版本号落库会把每次修订存成新的一行
+        assert arxiv_to_paper(ARXIV_ENTRY)["externalId"] == "2502.19271"
+
+    def test_没有登记_DOI_时为_None(self):
+        # 实测只有约一成的论文有正式发表 DOI;没有是常态,不是异常
+        assert arxiv_to_paper(ARXIV_ENTRY)["doi"] is None
+
+    def test_登记了_DOI_就被归一(self):
+        entry = atom_entry('<id>http://arxiv.org/abs/2502.00001v1</id>'
+                           '<published>2025-01-01T00:00:00Z</published>'
+                           '<title>T</title>'
+                           '<arxiv:doi>10.1145/ABCD.1234</arxiv:doi>')
+        assert arxiv_to_paper(entry)["doi"] == "10.1145/abcd.1234"
+
+    def test_没有_id_则丢弃(self):
+        assert arxiv_to_paper(atom_entry("<title>T</title>")) is None
+
+    def test_缺发表日期时年份为_None(self):
+        entry = atom_entry('<id>http://arxiv.org/abs/2502.00001v1</id><title>T</title>')
+        assert arxiv_to_paper(entry)["publicationYear"] is None
+
+    def test_缺标题时给占位(self):
+        entry = atom_entry('<id>http://arxiv.org/abs/2502.00001v1</id>'
+                           '<published>2025-01-01T00:00:00Z</published>')
+        assert arxiv_to_paper(entry)["title"] == "(无标题)"
+
+    def test_没有引用数(self):
+        # arXiv 不提供引用数 —— 如实留 0,不要去别处瞎猜
+        assert arxiv_to_paper(ARXIV_ENTRY)["citationCount"] == 0
+
+
+def paper(source, external_id, title, doi=None):
+    return {"source": source, "externalId": external_id, "title": title, "doi": doi}
+
+
+class TestInterleave:
+    def test_各源轮流取一条(self):
+        outcomes = [
+            ("A", [paper("a", "1", "A1"), paper("a", "2", "A2")]),
+            ("B", [paper("b", "1", "B1"), paper("b", "2", "B2")]),
+        ]
+        labels, merged = _interleave(outcomes, limit=4)
+
+        assert [p["title"] for p in merged] == ["A1", "B1", "A2", "B2"]
+        assert labels == ["A", "B"]
+
+    def test_只有部分源有结果时标签只列贡献了的(self):
+        outcomes = [("A", [paper("a", "1", "A1")]), ("B", [])]
+        labels, merged = _interleave(outcomes, limit=5)
+
+        assert labels == ["A"]
+        assert len(merged) == 1
+
+    def test_同一来源同一外部_ID_不重复(self):
+        outcomes = [("A", [paper("a", "1", "第一次"), paper("a", "1", "重复")])]
+        _, merged = _interleave(outcomes, limit=5)
+
+        assert [p["title"] for p in merged] == ["第一次"]
+
+    def test_同一_DOI_跨源不重复(self):
+        # 这就是跨源合并:同一篇论文先从 Crossref 进、又从别处进,只留一条
+        outcomes = [
+            ("A", [paper("crossref", "10.1/x", "来自 A", doi="10.1/x")]),
+            ("B", [paper("arxiv", "2501.1", "来自 B", doi="10.1/x")]),
+        ]
+        _, merged = _interleave(outcomes, limit=5)
+
+        assert len(merged) == 1
+
+    def test_不同_DOI_的同名论文不合并(self):
+        # 同名论文真实存在 —— 只按标题猜会把两篇不同的论文合成一篇
+        outcomes = [
+            ("A", [paper("crossref", "10.1/x", "同名的论文", doi="10.1/x")]),
+            ("B", [paper("crossref", "10.1/y", "同名的论文", doi="10.1/y")]),
+        ]
+        _, merged = _interleave(outcomes, limit=5)
+
+        assert len(merged) == 2
+
+    def test_达到条数上限就停(self):
+        outcomes = [
+            ("A", [paper("a", str(i), f"A{i}") for i in range(5)]),
+            ("B", [paper("b", str(i), f"B{i}") for i in range(5)]),
+        ]
+        _, merged = _interleave(outcomes, limit=3)
+
+        assert [p["title"] for p in merged] == ["A0", "B0", "A1"]
+
+    def test_全是空的(self):
+        labels, merged = _interleave([("A", []), ("B", [])], limit=5)
+
+        assert labels == []
+        assert merged == []
 
 
 class TestCleanText:

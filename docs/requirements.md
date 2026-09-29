@@ -65,6 +65,7 @@ REQ-001 后端接口稳定后开始,按功能点逐个交付。
 | S2 | Python 侧:多源检索与降级链 + `POST /search` | ✅ Done | 2026-09-29 |
 | S3 | Java 侧:`POST /api/papers/search`,检索结果由后端落库 | ✅ Done | 2026-09-29 |
 | S4 | 前端检索页(输入 + Agent 拆解 + 结果卡片 + 收藏入口) | ✅ Done | 2026-09-29 |
+| S5 | 接入 arXiv,检索改为多源并发合并 | ✅ Done | 2026-09-30 |
 
 > S1–S4 于 2026-09-29 完成:ai-service 29 条单元测试 + 后端 13 条集成测试(全量 79 条)
 > + 前端 56 条测试 + 20 项真实端到端冒烟;AI 实验记录见 `experiments/experiment-001.md`。
