@@ -68,7 +68,7 @@
   - 顶栏外壳改版:自绘导航(不用 `el-menu`),导航项由路由表推导
   - 前端测试增至 **43 条**:新增 jsdom 挂载测试,真实渲染视图并驱动交互
     (`InterestView` / `LoginView` / `AppLayout`)
-- **检索 Agent(REQ-002,S1–S3;前端检索页待做)**
+- **检索 Agent(REQ-002,S1–S4)**
   - **Python 侧** `POST /search`:自然语言 → Agent 拆解 → 多源检索 → 带来源的论文列表
     - 查询拆解 `app/agent.py`:一个提示词 + `response_format: json_object`,**不引 LangChain**
       (要的是一次结构化输出,不是一套编排框架)
@@ -84,6 +84,10 @@
     - 复用 `app.ai-service.base-url` 配置,连接超时 3s、读超时 120s
   - **安全修复**:检索接口此前会在"合法签名 + 用户已被删除"时放行。
     现与 `GET /api/users/me` 一致,回查用户不存在则 401
+  - **前端检索页** `SearchView.vue`:一句话输入 + 例子引导 + 检索中的明确等待提示(实测约 10 秒)
+    - **显示 Agent 的拆解**(检索词 / 时间范围 / 理由),让"为什么搜出来的是这些"可见
+    - 结果卡片带收藏按钮(进入时批量取收藏状态,按钮显示"已收藏"并可取消)
+    - 查询同步到地址栏,刷新不丢结果
   - 补 `SEMANTIC_SCHOLAR_API_KEY` 支持(匿名共享池实测持续 429)
 - 开发工具:
   - `scripts/kill-port.ps1`:清理残留占用端口的开发服务进程

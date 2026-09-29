@@ -17,6 +17,12 @@ const routes = [
         meta: { navLabel: '首页' },
       },
       {
+        path: 'search',
+        name: 'search',
+        component: () => import('../views/SearchView.vue'),
+        meta: { navLabel: '检索' },
+      },
+      {
         path: 'interests',
         name: 'interests',
         component: () => import('../views/InterestView.vue'),
