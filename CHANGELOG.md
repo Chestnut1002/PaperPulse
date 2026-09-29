@@ -35,6 +35,19 @@
   - `TokenForger`:用 `javax.crypto.Mac` **独立**签 JWT,不借助 jjwt —— 否则等于用被测实现验证它自己
   - `TestDatabaseGuard`:容器启动前核对库名,防止 `create-drop` 误删开发库数据
   - `application-test.yml`:测试库 `paperpulse_test`,与开发库完全隔离
+- **前端骨架与登录闭环**(FE-1)
+  - Vue Router 路由 + 全局登录守卫:未登录访问受保护页跳登录并记住原目标,已登录访问登录页回首页
+  - axios 请求层 `api/client.js`:注入 `Authorization: Bearer`、统一错误归一化为 `ApiError`
+    (`message` / `status` / `fieldErrors`),401 清登录态并跳登录页
+  - **登录接口的 401(凭据错误)不触发登出** —— 与"会话过期"是两种语义
+  - 登录态 `stores/auth.js`:localStorage 持久化,刷新不掉登录;存储损坏时按未登录处理
+  - 登录页 / 注册页:前端校验规则与后端约束一致,后端 `fieldErrors` 回填到对应表单项;
+    注册成功后自动登录(注册接口不返回 token)
+  - 首页:挂载时回查 `GET /api/users/me`,验证 token 仍然可用
+  - `AppLayout`:登录后外壳(品牌、当前用户、退出)
+  - 开发期联调用 Vite 代理 `/api` 到后端,dev 与 preview 均生效,**不需要后端 CORS**
+  - Element Plus **按需引入**:首屏 JS 从 1009 KB(gzip 326 KB)降到最大单块 79 KB(gzip 31 KB)
+  - 前端测试设施:Vitest + jsdom,14 条单测(请求层 8 条 + 登录态 6 条)
 - 开发工具:
   - `scripts/kill-port.ps1`:清理残留占用端口的开发服务进程
 

@@ -1258,3 +1258,156 @@ paper_read_history.uk_paper_read_user_paper = (user_id,paper_id)
 **F6 留给 REQ-002 的一件事**:论文目前由客户端提交元数据,后端不校验它是否真的来自所声称的来源。
 REQ-002 落地后,论文应当由后端自己从 S2 拉取写入,`POST /api/papers` 收窄为只读 ——
 那样这条路径就没有"客户端可抢占 externalId"的问题了。
+
+# 2026-09-29
+
+## 本次目标
+
+REQ-001 后端六个功能点已完成、接口稳定,但只能通过 curl 触及。本次开始前端,
+第一个增量 FE-1 建立工程骨架并打通登录闭环 —— 它是所有后续页面的地基,
+决定路由结构、请求层与状态管理怎么做。
+
+## 完成内容
+
+- **工程骨架**:Vue Router 路由 + 全局登录守卫、axios 请求层(token 注入 / 统一错误归一化 / 401 处置)、
+  登录态 store(localStorage 持久化)、登录后外壳 `AppLayout`
+- **登录 / 注册页**:表单校验规则与后端约束一致;后端 `fieldErrors` 回填到对应表单项;注册成功后自动登录
+- **首页**:挂载时回查 `GET /api/users/me`,顺带验证手中 token 是否仍然可用
+- **联调方案**:Vite dev / preview 代理 `/api` 到后端,不写 CORS 配置(理由见技术方案)
+- **Element Plus 按需引入**:首屏 JS 从 1009 KB 降到最大单块 79 KB
+- **前端测试设施**:引入 Vitest + jsdom,14 条单测
+- **脚手架清理**:删除 `HelloWorld.vue`、示例图片与图标(纯占位物,无功能)
+
+## 修改文件
+
+| 文件 | 修改 |
+| ---- | ---- |
+| `frontend/src/api/client.js` | 新增:axios 实例、拦截器、`ApiError` 归一化 |
+| `frontend/src/api/auth.js` | 新增:注册 / 登录 / 当前用户 |
+| `frontend/src/stores/auth.js` | 新增:登录态与持久化 |
+| `frontend/src/router/index.js` | 新增:路由表与登录守卫 |
+| `frontend/src/layouts/AppLayout.vue` | 新增:登录后外壳 |
+| `frontend/src/views/LoginView.vue` 等三个视图 | 新增:登录 / 注册 / 首页 |
+| `frontend/src/api/client.spec.js`、`stores/auth.spec.js` | 新增:单元测试 |
+| `frontend/vite.config.js` | 代理、Element Plus 按需引入、Vitest 配置 |
+| `frontend/src/main.js`、`App.vue`、`style.css`、`index.html` | 重写:去掉脚手架示例 |
+| `frontend/package.json` | 依赖与 `test` 脚本 |
+| `docs/design/F7-前端骨架与登录.md` | 新增:设计文档 |
+| `frontend/src/components/`、`src/assets/`、`public/icons.svg` | 删除:脚手架占位 |
+
+## 技术方案
+
+### 1. 开发期用代理,不写 CORS
+
+上一节说"做前端时必须补 CORS",那是假设前端直连 8080。改用 Vite 代理后,
+浏览器视角下前后端同源,**dev 与 preview 都不需要 CORS**。
+
+后端 CORS 留到部署拓扑确定时再加:那时才知道前端是被 nginx 反代到同域,还是独立域名。
+现在写只能填 `localhost` 猜一个,是一份**无法验证**的配置。
+
+### 2. 401 要区分"会话过期"和"密码错误"
+
+登录接口凭据错误也返回 401。若拦截器对所有 401 一律登出跳转,就混淆了两种语义。
+所以 `/auth/**` 的 401 排除在外,只把消息交给登录页展示。
+
+### 3. 分层与依赖方向
+
+`views → api / stores`,`api/client → stores + router`,下层不反向依赖视图。
+路由的页面组件一律懒加载,顺带避免了 `router → view → api/client → router` 的模块循环。
+
+## 遇到问题
+
+### 问题一(真问题):vue-router 装成了 5.x
+
+预期 4.x,`npm install vue-router` 装到的是 **5.3.1**。5.x 有哪些破坏性变更没有把握,
+不能想当然。查了随包发布的类型定义:
+
+```ts
+type NavigationGuardReturn = void | Error | boolean | RouteLocationRaw;
+```
+
+守卫返回 `RouteLocationRaw` 仍然有效,`createRouter` / `createWebHistory` / `useRouter` / `useRoute`
+四个关键 API 都在 —— 本次用到的部分兼容。**结论来自查证而不是假设**;
+若直接假定 4.x 的行为,风险要到运行时才暴露。
+
+### 问题二(自查):首屏 JS 1 MB
+
+Element Plus 全量引入(`app.use(ElementPlus)` + 全量 CSS)让首屏 JS 到 **1009 KB(gzip 326 KB)**,
+构建器直接给出 chunk 体积告警。
+
+改用 `unplugin-auto-import` + `unplugin-vue-components` 按需引入后:
+
+| 指标 | 全量引入 | 按需引入 |
+| ---- | ---- | ---- |
+| 最大单块 JS | 1009 KB(gzip 326 KB) | 79 KB(gzip 31 KB) |
+| 构建告警 | 有 | 无 |
+
+代价是 `ElMessage` 这类 API 不再有显式 import(由插件注入),代码里看不到引入来源 ——
+所以 `vite.config.js` 里写明了两个插件的作用,并用 `dts: false` 避免生成无用的类型声明文件。
+
+**验证方式**:不能只看体积数字。`v-loading` 是靠指令解析器引入的,静默失效的话体积照样小、功能却没了。
+所以另外确认了 `el-loading-mask` 样式确实进了产物包。
+
+## 测试结果
+
+### 单元测试(14 条)
+
+```
+cd frontend && npm test
+Test Files  2 passed (2)
+Tests  14 passed (14)
+```
+
+覆盖:token 注入(有 / 无)、错误体归一化(校验失败 / 网络不可达 / 无 message)、
+401 清登录态、**登录接口的 401 不触发登出**、非 401 不动登录态、
+登录态持久化与恢复、存储损坏时按未登录处理。
+
+### 端到端冒烟(22 项)
+
+后端起在 **8081**(不占用 8080),前端 dev server 起在 5173,
+所有请求都打到 **5173**,验证「浏览器 → Vite 代理 → 后端 → MySQL」整条链路。
+
+```
+python scratch/frontend_smoke.py
+共 22 项,通过 22,失败 0
+```
+
+覆盖:静态页可取、注册 201、重复用户名 409、非法参数 400 且带 `fieldErrors`、
+登录 200(带 token / tokenType / expiresIn)、错误密码 401、带 token 取用户 200、
+无 token / 篡改 token / 非 Bearer 认证头均 401 且为统一错误格式、
+兴趣词表与收藏列表经代理可达。
+
+### 反向验证(证明用例是承重的)
+
+沿用 F5 / F6 的做法:把 `onResponseError` 里的 `/auth/**` 例外去掉再跑 ——
+
+```
+× 登录接口的 401(凭据错误)不触发登出
+Tests  1 failed | 13 passed (14)
+```
+
+**恰好只有那一条失败**。恢复后重跑 14/14 全绿。
+
+### 后端回归
+
+后端本次**零改动**,仍跑一遍确认:
+
+```
+Tests run: 66, Failures: 0, Errors: 0, Skipped: 0
+BUILD SUCCESS
+```
+
+## 下一步计划
+
+- **FE-2 兴趣标签选择器**:34 标签 / 6 分类、1–5 权重、PUT 全量替换,挂在 `AppLayout` 下
+- **FE-3 收藏 / 阅读历史 / 评分管理**:需要先有论文数据 —— 检索属 REQ-002,
+  在那之前要给一个临时的论文录入入口
+- **验收方式**:`cd frontend && npm run dev`(默认代理到 8080);
+  后端在 8081 时用 `BACKEND_ORIGIN=http://localhost:8081 npm run dev`
+
+**已知取舍(不是遗漏)**:
+
+1. 登录 / 注册两页的卡片样式有约 35 行重复。两处重复尚在可接受范围(第三次出现时再抽 `AuthLayout`)。
+2. token 存 localStorage 有 XSS 读取面。本项目没有把用户输入当 HTML 渲染的地方,当前可接受;
+   要收紧可换 httpOnly Cookie + CSRF 防护。
+3. 页面观感无法由脚本验证 —— 接口链路与编译产物都验过了,**视觉效果需要打开浏览器确认**。
