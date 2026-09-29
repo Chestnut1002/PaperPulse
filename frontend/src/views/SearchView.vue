@@ -2,8 +2,9 @@
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-import { addFavorite, fetchFavorites, removeFavorite } from '../api/library'
+import { addFavorite, fetchFavorites, recordRead, removeFavorite } from '../api/library'
 import { searchPapers } from '../api/papers'
+import { paperMeta } from '../utils/paper'
 
 const route = useRoute()
 const router = useRouter()
@@ -72,12 +73,18 @@ async function toggleFavorite(paper) {
   }
 }
 
-function authorLine(paper) {
-  const authors = paper.authors ?? []
-  if (!authors.length) return '作者未提供'
-  return authors.length > 3
-    ? authors.slice(0, 3).join(', ') + ' 等'
-    : authors.join(', ')
+/**
+ * 点开论文链接 = 要读它,顺手记一次阅读。
+ *
+ * **不 await 也不打扰用户**:阅读历史是弱信号,记不上不值得打断"去看论文"这件事本身。
+ * 但也不静默吞掉 —— 出了问题得在控制台留个痕。
+ */
+function openPaper(paper) {
+  recordRead(paper.id).catch((err) => {
+    if (err.status !== 401) {
+      console.warn('记录阅读失败', err)
+    }
+  })
 }
 
 onMounted(async () => {
@@ -169,31 +176,29 @@ onMounted(async () => {
           没有找到相关论文 —— 换个说法,或去掉时间限制再试一次。
         </p>
 
-        <ul v-else class="papers">
+        <ul v-else class="paper-list">
           <li v-for="paper in result.papers" :key="paper.id">
-            <div class="paper__main">
+            <div class="paper-row__main">
               <a
                 v-if="paper.url"
-                class="paper__title"
+                class="paper-row__title"
                 :href="paper.url"
                 target="_blank"
                 rel="noopener noreferrer"
+                @click="openPaper(paper)"
               >
                 {{ paper.title }}
               </a>
-              <span v-else class="paper__title">{{ paper.title }}</span>
+              <span v-else class="paper-row__title">{{ paper.title }}</span>
 
-              <p class="paper__meta">
-                {{ authorLine(paper) }}
-                <template v-if="paper.venue"> · {{ paper.venue }}</template>
-                <template v-if="paper.publicationYear"> · {{ paper.publicationYear }}</template>
-                · {{ paper.sourceDisplayName }}
+              <p class="paper-row__meta">{{ paperMeta(paper) }}</p>
+
+              <p v-if="paper.abstractText" class="paper-row__abstract">
+                {{ paper.abstractText }}
               </p>
-
-              <p v-if="paper.abstractText" class="paper__abstract">{{ paper.abstractText }}</p>
             </div>
 
-            <div class="paper__actions">
+            <div class="paper-row__actions">
               <el-button
                 size="small"
                 :type="favoriteIds.has(paper.id) ? 'default' : 'primary'"
@@ -359,69 +364,7 @@ onMounted(async () => {
   color: var(--pp-ink-3);
 }
 
-.papers {
-  margin: var(--pp-space-3) 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.papers li {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: var(--pp-space-4);
-  padding: var(--pp-space-4) 0;
-  border-top: 1px solid var(--pp-line);
-}
-
-.papers li:first-child {
-  border-top: 0;
-  padding-top: var(--pp-space-3);
-}
-
-.papers li:last-child {
-  padding-bottom: 0;
-}
-
-.paper__main {
-  min-width: 0;
-}
-
-.paper__title {
-  display: block;
-  color: var(--pp-ink);
-  font-size: var(--pp-text-md);
-  font-weight: var(--pp-weight-medium);
-  line-height: 1.45;
-  text-decoration: none;
-  transition: color var(--pp-dur) var(--pp-ease);
-}
-
-a.paper__title:hover {
-  color: var(--pp-accent);
-}
-
-.paper__meta {
-  margin: 6px 0 0;
-  font-size: var(--pp-text-xs);
-  color: var(--pp-ink-3);
-}
-
-/* 摘要最多三行,超出省略 —— 列表里不需要读完全文 */
-.paper__abstract {
-  display: -webkit-box;
-  -webkit-line-clamp: 3;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  margin: 8px 0 0;
-  font-size: var(--pp-text-sm);
-  color: var(--pp-ink-2);
-  line-height: 1.6;
-}
-
-.paper__actions {
-  flex: none;
-}
+/* 论文行的样式在 styles/components.css —— 检索页与"我的论文"页共用同一套 */
 
 @media (max-width: 980px) {
   .searchbar {

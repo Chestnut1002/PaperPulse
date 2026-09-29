@@ -3,7 +3,7 @@ import { createApp, h } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 
 import SearchView from './SearchView.vue'
-import { addFavorite, fetchFavorites, removeFavorite } from '../api/library'
+import { addFavorite, fetchFavorites, recordRead, removeFavorite } from '../api/library'
 import { searchPapers } from '../api/papers'
 import { flush } from '../test/flush'
 
@@ -12,6 +12,7 @@ vi.mock('../api/library', () => ({
   fetchFavorites: vi.fn(),
   addFavorite: vi.fn(),
   removeFavorite: vi.fn(),
+  recordRead: vi.fn(),
 }))
 
 const PAPER_A = {
@@ -83,7 +84,7 @@ function submitSearch(host) {
 }
 
 function paperTitles(host) {
-  return Array.from(host.querySelectorAll('.papers .paper__title')).map((node) =>
+  return Array.from(host.querySelectorAll('.paper-list .paper-row__title')).map((node) =>
     node.textContent.trim(),
   )
 }
@@ -94,6 +95,7 @@ describe('SearchView', () => {
     fetchFavorites.mockResolvedValue([])
     addFavorite.mockResolvedValue({})
     removeFavorite.mockResolvedValue(undefined)
+    recordRead.mockResolvedValue({})
   })
 
   it('还没检索时给出可点的例子', async () => {
@@ -155,14 +157,14 @@ describe('SearchView', () => {
     expect(paperTitles(host)).toEqual(['对比学习用于推荐系统', '第二篇'])
     expect(host.textContent).toContain('找到 2 篇')
 
-    const meta = host.querySelectorAll('.paper__meta')[0].textContent
+    const meta = host.querySelectorAll('.paper-row__meta')[0].textContent
     expect(meta).toContain('Alice, Bob')
     expect(meta).toContain('NeurIPS')
     expect(meta).toContain('2025')
     expect(meta).toContain('Crossref')
 
     // 作者缺失时不能说成空白
-    expect(host.querySelectorAll('.paper__meta')[1].textContent).toContain('作者未提供')
+    expect(host.querySelectorAll('.paper-row__meta')[1].textContent).toContain('作者未提供')
   })
 
   it('收藏一篇论文', async () => {
@@ -174,14 +176,14 @@ describe('SearchView', () => {
     submitSearch(host)
     await flush()
 
-    const button = host.querySelector('.paper__actions .el-button')
+    const button = host.querySelector('.paper-row__actions .el-button')
     expect(button.textContent).toContain('收藏')
 
     button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flush()
 
     expect(addFavorite).toHaveBeenCalledWith(11)
-    expect(host.querySelector('.paper__actions .el-button').textContent).toContain('已收藏')
+    expect(host.querySelector('.paper-row__actions .el-button').textContent).toContain('已收藏')
   })
 
   it('已收藏的论文进来就显示「已收藏」,再点则取消', async () => {
@@ -195,15 +197,15 @@ describe('SearchView', () => {
     submitSearch(host)
     await flush()
 
-    const button = host.querySelector('.paper__actions .el-button')
+    const button = host.querySelector('.paper-row__actions .el-button')
     expect(button.textContent).toContain('已收藏')
 
     button.dispatchEvent(new MouseEvent('click', { bubbles: true }))
     await flush()
 
     expect(removeFavorite).toHaveBeenCalledWith(11)
-    expect(host.querySelector('.paper__actions .el-button').textContent).toContain('收藏')
-    expect(host.querySelector('.paper__actions .el-button').textContent).not.toContain('已收藏')
+    expect(host.querySelector('.paper-row__actions .el-button').textContent).toContain('收藏')
+    expect(host.querySelector('.paper-row__actions .el-button').textContent).not.toContain('已收藏')
   })
 
   it('取不到收藏状态不影响检索', async () => {
@@ -219,6 +221,37 @@ describe('SearchView', () => {
 
     expect(paperTitles(host)).toEqual(['对比学习用于推荐系统'])
     // 收藏状态取不到,不应弹错误条干扰检索
+    expect(host.querySelector('.alert')).toBeNull()
+  })
+
+  it('点开论文链接时记一次阅读 —— 否则阅读历史永远是空的', async () => {
+    searchPapers.mockResolvedValue(searchResult([PAPER_A]))
+    const { host } = await mountView()
+
+    setInput(host.querySelector('input'), '对比学习')
+    await flush()
+    submitSearch(host)
+    await flush()
+
+    host.querySelector('.paper-row__title').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flush()
+
+    expect(recordRead).toHaveBeenCalledWith(11)
+  })
+
+  it('记录阅读失败不打扰用户 —— 弱信号不该挡住看论文', async () => {
+    recordRead.mockRejectedValue(Object.assign(new Error('炸了'), { status: 500 }))
+    searchPapers.mockResolvedValue(searchResult([PAPER_A]))
+    const { host } = await mountView()
+
+    setInput(host.querySelector('input'), '对比学习')
+    await flush()
+    submitSearch(host)
+    await flush()
+
+    host.querySelector('.paper-row__title').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    await flush()
+
     expect(host.querySelector('.alert')).toBeNull()
   })
 

@@ -23,6 +23,12 @@ const routes = [
         meta: { navLabel: '检索' },
       },
       {
+        path: 'library',
+        name: 'library',
+        component: () => import('../views/LibraryView.vue'),
+        meta: { navLabel: '我的论文' },
+      },
+      {
         path: 'interests',
         name: 'interests',
         component: () => import('../views/InterestView.vue'),
