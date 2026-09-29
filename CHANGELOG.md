@@ -68,6 +68,23 @@
   - 顶栏外壳改版:自绘导航(不用 `el-menu`),导航项由路由表推导
   - 前端测试增至 **43 条**:新增 jsdom 挂载测试,真实渲染视图并驱动交互
     (`InterestView` / `LoginView` / `AppLayout`)
+- **检索 Agent(REQ-002,S1–S3;前端检索页待做)**
+  - **Python 侧** `POST /search`:自然语言 → Agent 拆解 → 多源检索 → 带来源的论文列表
+    - 查询拆解 `app/agent.py`:一个提示词 + `response_format: json_object`,**不引 LangChain**
+      (要的是一次结构化输出,不是一套编排框架)
+    - **Agent 只产出检索参数,不产出论文** —— 列表里每一条都来自真实数据库返回,模型没有编造的机会
+    - 多源检索 `app/sources.py`:Semantic Scholar 为主、**Crossref 降级备选**,数据归一化成同一形状
+    - 年份过滤 + 按外部 ID 去重;年份缺失时视为不符合(用户明确要"2024 年以后"时不塞未知年份的进来)
+    - 失败语义:大模型出错 502、所有数据源失败 503
+  - **Java 侧** `POST /api/papers/search`:调 ai-service → **由后端落库** → 返回带本地 id 的论文
+    - **清偿 F6 遗留技术债**:元数据由后端自己拉取写入,客户端再也无法抢占 `(source, externalId)`
+    - 复用 `PaperService.resolve` 的并发安全幂等 upsert,重复检索不会重复入库
+    - 只接受元数据齐全的条目,一条坏数据不该毁掉整次检索
+    - 上游故障 502 / 503 而非 500 —— 让"依赖挂了"和"我们的 bug"在监控里分得开
+    - 复用 `app.ai-service.base-url` 配置,连接超时 3s、读超时 120s
+  - **安全修复**:检索接口此前会在"合法签名 + 用户已被删除"时放行。
+    现与 `GET /api/users/me` 一致,回查用户不存在则 401
+  - 补 `SEMANTIC_SCHOLAR_API_KEY` 支持(匿名共享池实测持续 429)
 - 开发工具:
   - `scripts/kill-port.ps1`:清理残留占用端口的开发服务进程
 

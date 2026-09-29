@@ -1564,3 +1564,185 @@ npm run build → ✓ built in 354ms,无告警
 3. 34 个标签平铺约 700px 高,靠右栏名单解决"查看"。分类折叠留到实际使用中确有需要时再做。
 4. 视觉效果依旧只能由人确认 —— 挂载测试能证明"渲染出来了、点击有反应",
    但**好不好看、间距是否舒服,必须打开浏览器看**。
+
+# 2026-09-29(第三次)
+
+## 本次目标
+
+开始 REQ-002 检索 Agent。用户需求是「自然语言 → 检索 → 返回带来源的文献列表」,
+本次完成它的后端两半:Python 侧的 Agent 与检索(P1),Java 侧的接口与落库(P2)。
+
+## 完成内容
+
+- **Python 侧**:DeepSeek 客户端、查询拆解 Agent、多源检索(含降级链)、`POST /search` 接口;
+  检索逻辑从调试脚本收进服务,脚本改为调用它(避免两份实现)
+- **Java 侧**:`POST /api/papers/search` —— 调 ai-service、把结果落库、返回带本地 id 的论文
+- **堵掉了 F6 留下的技术债**:论文元数据现在由**后端自己拉取并写入**,
+  客户端再也无法抢占 `(source, externalId)`
+- **补齐 ai-service 的测试设施**:引入 pytest,29 条用例
+- **AI 实验记录** `experiments/experiment-001.md`:提示词 v1 → v2 的实测对比
+
+## 修改文件
+
+| 文件 | 修改 |
+| ---- | ---- |
+| `ai-service/app/config.py`、`llm.py`、`schemas.py`、`agent.py`、`sources.py` | 新增:配置、LLM 客户端、契约、查询拆解、多源检索 |
+| `ai-service/app/main.py` | 新增 `POST /search` |
+| `ai-service/scripts/search_papers.py` | 改为调用 `app.sources`,不再自带一份实现 |
+| `ai-service/tests/`、`conftest.py`、`requirements-dev.txt` | 新增:测试设施与 29 条用例 |
+| `backend/.../search/`(`SearchController` / `SearchService` / `AiSearchClient` / dto) | 新增:检索接口与落库编排 |
+| `backend/.../common/ApiException.java` | 新增 `badGateway`(502)与 `serviceUnavailable`(503) |
+| `backend/.../resources/application.yml` | 新增 `app.ai-service.base-url` |
+| `backend/src/test/.../support/StubAiService.java` | 新增:测试用的真实 HTTP 桩服务 |
+| `backend/src/test/.../search/SearchApiIntegrationTest.java` | 新增:13 条集成测试 |
+| `experiments/experiment-001.md` | 填写:提示词实验记录 |
+| `.env.example`、`ai-service/requirements.txt` | 补 `SEMANTIC_SCHOLAR_API_KEY`、`python-dotenv` |
+
+## 技术方案
+
+### 1. 论文由后端落库,而不是回传给前端再提交
+
+这是本次最重要的一条。F6 时论文元数据由客户端提供,后端不校验它是否真来自所声称的来源 ——
+一个登录用户理论上可以抢占某个 `(source, externalId)` 并写入错误的标题。当时的判断是
+"等 REQ-002 落地后收窄",现在兑现了:
+
+```
+浏览器 → Java(鉴权) → Python(检索) → Java 落库 → 返回带本地 id 的论文
+```
+
+元数据必须来自真正抓取它的那一方。前端拿到 id 后可以直接收藏 / 评分,不必再走一次元数据提交。
+
+### 2. 不上 LangChain
+
+要的是"自然语言 → 结构化检索参数",这是一次 JSON 输出调用:一个提示词 + `response_format: json_object` 就够。
+引 LangChain 只增加依赖和一层抽象,换不来实际能力。
+
+### 3. 先不做流式
+
+检索是一次性动作(实测约 10 秒),不像对话需要逐字输出。跨两个服务做 SSE 转发复杂度明显上升,
+而收益要等 REQ-003 的多轮问答才显现 —— 那时再做。
+
+### 4. Agent 只产出检索参数,不产出论文
+
+把边界划在这里,模型就没有编造文献的机会:它说的论文一篇都不作数,列表里的每一条都来自真实数据库返回。
+
+### 5. 上游故障用 502 / 503,不用 500
+
+502 = 上游返回了错误;503 = 上游连不上。用 500 会让"依赖的服务挂了"和"我们的代码有 bug"
+在日志与监控里混在一起 —— 这两者的排查方向完全不同。
+
+## 遇到问题
+
+### 问题一(真问题):模型返回的关键词是数组,`str()` 之后变成垃圾
+
+提示词写的是"给 3~8 个词",模型把它理解成"返回一个词表",`keywords` 是数组。
+而代码里是 `str(data.get("keywords"))` —— Python 对列表做 `str()` 得到的是
+`"['contrastive learning', 'recommender systems', ...]"`,**带着方括号和引号的字面量**。
+
+这个串会被原样送进检索接口。**危险之处在于它不报错**:接口照样 200,只是搜不到东西。
+不把返回结果打印出来看,这个 bug 可以一直藏着。
+
+修法有两层:提示词明确要求"一个字符串",代码里也加兜底(是数组就拼成查询串)。
+**兜底不能省 —— 提示词是请求,不是保证。**
+
+### 问题二:堆砌同义词反而稀释检索
+
+模型热心地补了一堆同义词(LLM、denoising diffusion probabilistic models、score-based……)。
+学术检索接口做的是**相关性排序**而不是布尔匹配,查询串越长越杂,每篇的相关度打分越被拉平,
+前排反而更泛。提示词补上"不要堆砌同义词"后,输入"帮我看看扩散模型"从 7 个词的词汤收敛成
+`diffusion models generative deep learning`。
+
+### 问题三:"2024 年以后"被理解成 2025 起
+
+字面上"以后 = 之后",说得通,但**做文献检索时把边界年排除掉会漏结果**。
+提示词写明"'X 年以后'理解为 X 年及以后"并说明理由,现在稳定给出 2024。
+
+### 问题四(安全问题,测试抓到的):合法 token + 不存在用户 = 放行
+
+写集成测试时断言"伪造 token 应返回 401",结果返回了 **200**。
+
+查下来不是伪造的问题:`TokenForger` 用正确密钥签名,所以这个 token **签名有效**,
+只是 `sub` 指向一个不存在的用户。JwtAuthenticationFilter 刻意不查库(性能考量,
+且很多接口不需要用户实体),于是它被当成合法请求放行了。
+
+F4 的用例注释里写着这条原则 ——「**token 完全合法但用户不存在 —— 签名有效 ≠ 应该放行**」,
+并且 `GET /api/users/me` 是回查数据库的。问题在于:我的检索接口**不需要用户实体**,
+就没有回查,于是成了这条保证的缺口。
+
+修法:检索前先 `userService.getById(userId)`,查不到抛 401 —— 与 `/api/users/me` 同一个落点。
+检索虽然用不到用户实体,但"用户被删除后其 token 立刻失效"这条保证要么对所有接口成立,要么等于没有。
+
+**顺带发现的同类缺口**:`GET /api/interests`(标签词表)同样不接触用户实体,因此有一样的缺口。
+本次没有一并改(保持改动聚焦),已记在下一步里。
+
+## 测试结果
+
+### Python 单元测试(29 条)
+
+```
+cd ai-service && .venv/Scripts/python.exe -m pytest tests/ -q
+29 passed
+```
+
+覆盖查询拆解的规整(数组形状、两位数年份、起止颠倒、越界年份、缺失关键词)、
+年份区间过滤、去重、摘要清洗、空值归一。全部不联网。
+
+### Java 集成测试(13 条)
+
+```
+mvn test -Dtest=SearchApiIntegrationTest
+Tests run: 13, Failures: 0, Errors: 0
+```
+
+ai-service 用一个**真实的 HTTP 桩服务**替代(JDK 自带的 `HttpServer`,不引 WireMock)——
+被测路径上除了"对面的服务是谁",HTTP 调用、JSON 反序列化、状态码映射、落库全是真的。
+覆盖:落库与本地 id、拆解结果透传、**检索到的论文可直接收藏**、重复检索不重复入库、
+元数据不全的条目被跳过、空结果不算错误、请求体形状与默认条数、参数校验、
+未登录与伪造 token、上游报错映射 502、连不上映射 503。
+
+### 全量回归(79 条)
+
+```
+mvn test
+Tests run: 79, Failures: 0, Errors: 0
+```
+
+原有 66 条全部通过,无回归。
+
+### 真实端到端冒烟(19 项)
+
+```
+python scratch/search_smoke.py
+共 19 项,通过 19,失败 0
+```
+
+**这条链路是真的**:真的调 DeepSeek 拆解、真的检索外部数据库、真的落库。
+实测一次检索约 10.2 秒(大模型拆解 + 外部接口往返)。
+
+```
+输入:找 2024 年以后对比学习在推荐系统里的应用
+拆解:contrastive learning recommender systems(2024 至今)
+命中:Crossref
+结果:[2] GenGCL: Generative Graph Contrastive Learning…(2026)
+      [3] Disentangling Context from Auxiliary Information…(2026)
+      [4] Multiview graph dual-attention deep learning…(2025)
+```
+
+拿到 id 后直接收藏成功 → 证实"客户端不必提交元数据"这条路径通了。
+
+## 下一步计划
+
+- **P3 前端检索页**:输入框 + 结果卡片 + 收藏 / 评分入口,挂在 `AppLayout` 下
+- **`GET /api/interests` 的同类缺口**:它也不回查用户,合法 token + 已删除用户会被放行
+- **FE-3 收藏 / 历史 / 评分管理**:现在有论文来源了(检索结果),不必再做临时录入入口
+- **Semantic Scholar 的 429**:实测匿名共享池持续限流,降级链兜到了 Crossref,
+  但 Crossref 的元数据明显更差(preprint 多、摘要缺失率高)。已加上 `SEMANTIC_SCHOLAR_API_KEY`
+  支持,申请到 key 就能走独立配额并对比两源质量
+
+**已知取舍(不是遗漏)**:
+
+1. Agent 只做"拆解一次 → 搜一次",没有多轮检索(先搜、看结果、再补搜)。留待评估必要性。
+2. 检索没有缓存。同一个词重复搜会重复调大模型与外部接口 —— 但论文落库是幂等的,
+   所以代价只是那 10 秒。等有性能诉求再加。
+3. 检索质量还没有量化。目前只验证了"拆解结果对、链路通",没有测召回质量 ——
+   这要等 REQ-006 用 Recall@K 来量。

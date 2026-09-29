@@ -3,7 +3,7 @@
 | 需求编号 | 需求描述 | 优先级 | 状态 |
 | ---- | ---- | ---- | ---- |
 | REQ-001 | 用户注册/登录(JWT),兴趣标签、收藏、阅读历史、论文评分 | High | Done |
-| REQ-002 | 检索 Agent:自然语言 → arXiv / Semantic Scholar 检索,返回带来源文献列表 | High | TODO |
+| REQ-002 | 检索 Agent:自然语言 → arXiv / Semantic Scholar 检索,返回带来源文献列表 | High | Doing |
 | REQ-003 | 论文精读问答:锚点+动态截断 / RAG,回答带引用 | High | TODO |
 | REQ-004 | 个性化论文推荐:行为反馈闭环 + 探索位(diversity_ratio) | High | TODO |
 | REQ-005 | 可解释推荐理由(每条推荐附"为什么推荐") | Medium | TODO |
@@ -52,8 +52,24 @@ REQ-001 后端接口稳定后开始,按功能点逐个交付。
 > 设计文档 `docs/design/F8-兴趣标签选择器与视觉规范.md`,明细见「2026-09-29(第二次)」。
 > 开发期前后端通过 Vite 代理联调,后端暂不需要 CORS(理由见 F7 设计文档 3.1)。
 
-## REQ-002~006 拆分
+## REQ-002 拆分与进度
 
-尚未开始,待 REQ-001 完成后按优先级依次拆分。
-REQ-002 的前置调研已完成:因本机网络不可达 `export.arxiv.org`,检索数据源改为
-Semantic Scholar 为主、Crossref 为降级备选(详见 docs/dev-log.md)。
+**数据源变更**:因本机网络不可达 `export.arxiv.org`,检索不走 arXiv 官方 API,
+改为 **Semantic Scholar 为主、Crossref 为降级备选**(降级链自动切换,详见 docs/dev-log.md)。
+
+| 编号 | 功能点 | 状态 | 完成日期 |
+| ---- | ---- | ---- | ---- |
+| S1 | Python 侧:查询拆解 Agent(自然语言 → 检索参数) | ✅ Done | 2026-09-29 |
+| S2 | Python 侧:多源检索与降级链 + `POST /search` | ✅ Done | 2026-09-29 |
+| S3 | Java 侧:`POST /api/papers/search`,检索结果由后端落库 | ✅ Done | 2026-09-29 |
+| S4 | 前端检索页(输入 + 结果卡片 + 收藏入口) | ⬜ TODO | — |
+
+> S1–S3 于 2026-09-29 完成:ai-service 29 条单元测试 + 后端 13 条集成测试(全量 79 条)
+> + 19 项真实端到端冒烟;AI 实验记录见 `experiments/experiment-001.md`。
+>
+> **技术债清偿**:论文元数据改由后端自己拉取写入,客户端不再能抢占 `(source, externalId)` ——
+> F6 遗留的这条问题到此关闭。
+
+## REQ-003~006 拆分
+
+尚未开始,待 REQ-002 完成后按优先级依次拆分。

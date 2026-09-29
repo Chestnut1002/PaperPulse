@@ -36,4 +36,19 @@ public class ApiException extends RuntimeException {
     public static ApiException notFound(String message) {
         return new ApiException(HttpStatus.NOT_FOUND, message);
     }
+
+    /**
+     * 上游服务返回了错误。
+     *
+     * <p>用 502 而不是 500:这让"我们的代码有 bug"和"依赖的服务出问题了"在日志与监控里区分得开 ——
+     * 两者的排查方向完全不同。
+     */
+    public static ApiException badGateway(String message) {
+        return new ApiException(HttpStatus.BAD_GATEWAY, message);
+    }
+
+    /** 上游服务连不上。属于"暂时不可用",重试可能就好了,所以是 503 不是 500。 */
+    public static ApiException serviceUnavailable(String message) {
+        return new ApiException(HttpStatus.SERVICE_UNAVAILABLE, message);
+    }
 }
