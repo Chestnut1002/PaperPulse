@@ -1856,3 +1856,116 @@ npm run build → ✓ built in 408ms,无告警
 
 1. 检索页只做了收藏,没有评分与"标记已读" —— 那些属于 FE-3。
 2. 检索结果不分页。`limit` 上限 20,目前够用;真要翻页得先想清楚"再搜一次"和"翻页"的区别。
+
+# 2026-09-29(第五次)
+
+## 本次目标
+
+修「同一篇论文因命中不同数据源而被存成两行」的问题,做法是引入 DOI 作为跨源身份。
+
+## 完成内容
+
+- `paper` 表加 `doi` 列 + 唯一索引(可空,MySQL 允许多行 NULL,所以没有 DOI 的论文互不冲突)
+- `PaperService.resolve` 的查找顺序改为:**有 DOI 优先按 DOI 查**,查不到再退回 `(来源, 外部 ID)`
+- DOI 规范化(`Doi.normalize` / `normalize_doi`):小写、剥 `https://doi.org/`、`doi:` 前缀、
+  只接受 `10.xxx/yyy` 的形状 —— **形状不对就返回 null 而不是原样返回**,
+  兜底一个假身份会把两篇不同的论文合并成一篇,那比多存一行糟糕得多
+- S2 侧改为请求 `externalIds` 字段并从中取 DOI(DOI 不在顶层,取错地方这个功能就悄悄失效)
+- 把「条目 → 论文」的映射从检索函数里抽出来(`semantic_scholar_to_paper` / `crossref_to_paper`),
+  原来它藏在 HTTP 调用里没法单测,而 DOI 从哪来正是最容易错的地方
+- `applyMetadata` 会把后拿到的 DOI 补到已有行上,之后就能跨源认人
+
+## 修改文件
+
+| 文件 | 修改 |
+| ---- | ---- |
+| `backend/.../paper/Doi.java` | 新增:DOI 规范化 |
+| `backend/.../paper/Paper.java` | 加 `doi` 字段 + 唯一约束 + 回填 |
+| `backend/.../paper/PaperRepository.java` | 加 `findByDoi` |
+| `backend/.../paper/PaperService.java` | 查找顺序:DOI 优先 |
+| `backend/.../paper/dto/{PaperInput,PaperResponse}.java`、`search/dto/AiSearchResponse.java` | 契约加 `doi` |
+| `ai-service/app/sources.py` | S2 取 `externalIds.DOI`;抽出两个映射函数;`normalize_doi` |
+| `ai-service/app/schemas.py` | Paper 加 `doi` |
+| `backend/.../paper/DoiApiIntegrationTest.java` | 新增:8 条跨源身份测试 |
+| `backend/.../search/SearchApiIntegrationTest.java` | 加 1 条"换源后复用同一行"的检索路径用例 |
+| `ai-service/tests/test_sources.py` | 加 14 条(规范化 + 两个映射函数) |
+| `scratch/search_smoke.py` | 断言改为按不变量,而非"两次结果有重叠" |
+
+## 遇到问题
+
+### 问题一(重要,方案本身的局限):arXiv 预印本与正式发表版是两个 DOI
+
+修完之后实测,发现原来那对重复(同一个标题在 Crossref 与 S2 下各一行)**并没有被合并**:
+
+```
+id=4  CROSSREF          10.1016/j.eswa.2025.128378   Multiview graph dual-attention…
+id=6  SEMANTIC_SCHOLAR  10.48550/arxiv.2502.19271    Multiview graph dual-attention…
+```
+
+DOI 不一样:Crossref 给的是**期刊 DOI**,S2 给的是 **arXiv 预印本的 DOI**
+(`10.48550` 是 arXiv 的 DOI 前缀)。它们是**两条不同的记录** —— 预印本和正式发表版,
+只是标题相同。
+
+**所以本次的修复没有解决这个具体症状。** 它解决的是另一种情形:两个源引用的是**同一条**
+已发表记录(DOI 相同)时,现在会正确合并。这种情况同样常见,而且它是任何更聪明匹配的前提。
+
+**我在出方案时应该先查一下 S2 到底给出什么 DOI**,而不是假定"sources 都会给同一个 DOI"。
+当时库里还没有 doi 列,但直接看一次 S2 的原始响应就能发现 —— 这是我漏掉的一步。
+
+**要不要进一步合并预印本与正式版?** 那需要按标题+年份+作者做模糊匹配,
+而**同名论文真实存在**,错误合并会静默地把两篇不同的论文变成一篇 ——
+这是不可逆的数据损坏,比多存一行严重得多。建议当成一个独立的、需要单独评估的方案,不要在检索里顺手做。
+
+### 问题二(测试设计):断言"两次结果有重叠"是靠不住的
+
+冒烟测试原来断言"重复检索返回同样的 id"。实测发现:同一句话连搜三次,
+第一次走 Crossref、第二三次走 Semantic Scholar,**两次结果可以完全不重叠** ——
+降级链换源时,论文集合整批都不同。而且即便不换源,外部接口每次返回的集合与顺序也可能变。
+
+改成断言**不变量**:同一个 `(来源, 外部 ID)` 不会对应两个本地 id、同一个 DOI 不会对应两个本地 id。
+重叠篇数只作为信息打印出来,不再作为通过条件。**测试应该断言保证成立的性质,而不是碰巧成立的现象。**
+
+### 问题三(环境):后端重启失败,端口被残留进程占着
+
+`TaskStop` 只结束了 Maven 外壳,**Java 子进程继续占着 8081**,新实例启动即失败
+(这也是之前记录过的 Windows 坑)。用 `scripts/kill-port.ps1` 清掉后正常。
+注意:此时旧进程还在服务,冒烟测试照样能跑通 —— **如果不看启动日志,会误以为新代码已生效**。
+
+## 测试结果
+
+### Python(43 条,新增 14)
+
+覆盖 DOI 规范化(大小写、各种前缀、形状不对返回 null)、两个来源的条目映射
+(S2 的 DOI 从 `externalIds` 取、Crossref 的 DOI 同时是身份)、缺字段时的兜底。
+
+### 后端(88 条,新增 9)
+
+```
+mvn test
+Tests run: 88, Failures: 0, Errors: 0
+```
+
+F6 的 25 条、检索的 13 条全部无回归。新增:
+
+- **跨源合并**:同一 DOI 从两个来源进来只存一行、元数据互补而不是互相覆盖
+- **规范化**:`https://doi.org/10.1000/ABC` 与 `10.1000/abc` 认成同一篇
+- **边界**:没有 DOI 时行为完全不变;不同来源的同名论文**不会**被错误合并(宁可多存一行);
+  形状不对的 DOI 当作没有
+- **回填**:已有行后来拿到 DOI 会补上,之后即可跨源认人
+- **检索路径**:第一次走 Crossref、第二次走 S2,同一 DOI 复用同一行
+
+### 端到端(21 项)
+
+```
+python scratch/search_smoke.py
+共 21 项,通过 21,失败 0
+```
+
+数据库确认 `doi` 列已建、已有行被回填、没有同一身份对应两个 id。
+
+## 下一步计划
+
+- **预印本 / 正式版的重复**:需要单独方案(模糊匹配 + 明确的合并策略),风险高,不建议顺手做
+- **FE-3 收藏 / 历史 / 评分管理页**
+- `GET /api/interests` 的鉴权缺口(仍未修)
+- 开发库里还留着十几个测试账号与论文,需要时清一次

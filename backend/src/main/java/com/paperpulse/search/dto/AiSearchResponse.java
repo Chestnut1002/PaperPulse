@@ -30,6 +30,8 @@ public record AiSearchResponse(String query, Plan plan, String sourceLabel, List
     public record Paper(
             String source,
             String externalId,
+            /** DOI,跨源身份;来源可能不给,所以可空 */
+            String doi,
             String title,
             List<String> authors,
             String abstractText,

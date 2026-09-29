@@ -41,6 +41,9 @@ class Paper(BaseModel):
     publicationYear: int | None = None
     venue: str | None = None
     url: str | None = None
+    # DOI:同一篇论文在不同来源下的 DOI 相同,而后端是按 (来源, 外部 ID) 去重的,
+    # 所以只靠那对键会把同一篇论文在两个源里各存一行。带上 DOI,后端才能跨源认出它。
+    doi: str | None = None
 
     # 以下两个只有展示用途,不参与落库
     citationCount: int = 0

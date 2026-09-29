@@ -1,6 +1,14 @@
-"""检索数据源的纯逻辑:归一化、年份过滤、去重。不联网。"""
+"""检索数据源的纯逻辑:归一化、年份过滤、去重、条目映射。不联网。"""
 
-from app.sources import _clean_abstract, _dedupe, _in_year_range, _non_empty
+from app.sources import (
+    _clean_abstract,
+    _dedupe,
+    _in_year_range,
+    _non_empty,
+    crossref_to_paper,
+    normalize_doi,
+    semantic_scholar_to_paper,
+)
 
 
 class TestYearRange:
@@ -75,3 +83,112 @@ class TestNonEmpty:
 
     def test_去除首尾空白(self):
         assert _non_empty("  x  ") == "x"
+
+
+class TestNormalizeDoi:
+    def test_裸串原样保留(self):
+        assert normalize_doi("10.1016/j.eswa.2025.128378") == "10.1016/j.eswa.2025.128378"
+
+    def test_转成小写(self):
+        # DOI 本身大小写不敏感,不归一会让同一篇论文因写法不同被当成两篇
+        assert normalize_doi("10.1000/XYZ") == "10.1000/xyz"
+
+    def test_剥掉各种前缀(self):
+        for raw in (
+            "https://doi.org/10.1000/xyz",
+            "http://doi.org/10.1000/xyz",
+            "doi:10.1000/xyz",
+            "  https://doi.org/10.1000/xyz  ",
+        ):
+            assert normalize_doi(raw) == "10.1000/xyz", raw
+
+    def test_形状不对就不认(self):
+        # 宁可不认,也别拿一个假身份去把两篇不同的论文合并成一篇
+        assert normalize_doi("not-a-doi") is None
+        assert normalize_doi("10.1000") is None          # 缺斜杠
+        assert normalize_doi("11.1000/xyz") is None      # 前缀不是 10.
+        assert normalize_doi("") is None
+        assert normalize_doi(None) is None
+
+
+S2_ITEM = {
+    "paperId": "abc123",
+    "title": "A Paper",
+    "year": 2025,
+    "authors": [{"name": "Alice"}, {"name": "Bob"}],
+    "abstract": "Abstract text",
+    "url": "https://example.com/a",
+    "citationCount": 7,
+    "venue": "NeurIPS",
+    "externalIds": {"DOI": "10.1000/XYZ", "ArXiv": "2501.00001"},
+}
+
+CROSSREF_ITEM = {
+    "DOI": "10.1016/j.eswa.2025.128378",
+    "title": ["Another Paper"],
+    "author": [{"given": "Alice", "family": "Smith"}],
+    "issued": {"date-parts": [[2025, 3, 1]]},
+    "is-referenced-by-count": 9,
+    "abstract": "<jats:p>Hello</jats:p>",
+    "URL": "https://doi.org/10.1016/j.eswa.2025.128378",
+    "container-title": ["Expert Systems with Applications"],
+}
+
+
+class TestSemanticScholarMapping:
+    def test_字段映射完整(self):
+        paper = semantic_scholar_to_paper(S2_ITEM)
+
+        assert paper["source"] == "semantic_scholar"
+        assert paper["externalId"] == "abc123"
+        assert paper["title"] == "A Paper"
+        assert paper["authors"] == ["Alice", "Bob"]
+        assert paper["abstractText"] == "Abstract text"
+        assert paper["publicationYear"] == 2025
+        assert paper["venue"] == "NeurIPS"
+        assert paper["url"] == "https://example.com/a"
+        assert paper["citationCount"] == 7
+
+    def test_DOI_从_externalIds_里取并归一(self):
+        # S2 把 DOI 放在 externalIds 里而不是顶层 —— 取错地方的话跨源去重就失效了
+        assert semantic_scholar_to_paper(S2_ITEM)["doi"] == "10.1000/xyz"
+
+    def test_没有_DOI_时为_None_而不是报错(self):
+        item = {**S2_ITEM, "externalIds": {"ArXiv": "2501.00001"}}
+        assert semantic_scholar_to_paper(item)["doi"] is None
+
+    def test_缺少_externalIds_字段也不报错(self):
+        item = {key: value for key, value in S2_ITEM.items() if key != "externalIds"}
+        assert semantic_scholar_to_paper(item)["doi"] is None
+
+    def test_没有_paperId_则丢弃(self):
+        assert semantic_scholar_to_paper({**S2_ITEM, "paperId": None}) is None
+
+    def test_缺少标题时给占位而不是空串(self):
+        assert semantic_scholar_to_paper({**S2_ITEM, "title": None})["title"] == "(无标题)"
+
+
+class TestCrossrefMapping:
+    def test_字段映射完整(self):
+        paper = crossref_to_paper(CROSSREF_ITEM)
+
+        assert paper["source"] == "crossref"
+        assert paper["externalId"] == "10.1016/j.eswa.2025.128378"
+        assert paper["title"] == "Another Paper"
+        assert paper["authors"] == ["Alice Smith"]
+        assert paper["abstractText"] == "Hello"
+        assert paper["publicationYear"] == 2025
+        assert paper["venue"] == "Expert Systems with Applications"
+        assert paper["citationCount"] == 9
+
+    def test_DOI_同时是身份和_doi_字段(self):
+        paper = crossref_to_paper(CROSSREF_ITEM)
+        assert paper["doi"] == paper["externalId"] == "10.1016/j.eswa.2025.128378"
+
+    def test_没有_DOI_则丢弃(self):
+        # Crossref 的身份就是 DOI,没有它既没法落库也没法跨源认人
+        assert crossref_to_paper({**CROSSREF_ITEM, "DOI": None}) is None
+
+    def test_缺少发表日期时年份为_None(self):
+        item = {key: value for key, value in CROSSREF_ITEM.items() if key != "issued"}
+        assert crossref_to_paper(item)["publicationYear"] is None

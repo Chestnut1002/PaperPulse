@@ -140,7 +140,95 @@ def _dedupe(papers: list[dict]) -> list[dict]:
     return unique
 
 
+_DOI_PREFIXES = ("https://doi.org/", "http://doi.org/", "doi:")
+
+
+def normalize_doi(raw: object) -> str | None:
+    """规范化 DOI。
+
+    DOI 本身大小写不敏感,而且各家返回的形式不一(裸串、带 https://doi.org/ 前缀)。
+    不做归一的话,同一篇论文会因为写法不同被当成两个 —— 而这个字段正是用来跨源认人的。
+    """
+    text = _non_empty(raw)
+    if text is None:
+        return None
+
+    lowered = text.strip().lower()
+    for prefix in _DOI_PREFIXES:
+        if lowered.startswith(prefix):
+            lowered = lowered[len(prefix):]
+            break
+
+    # 只接受 10.xxxx/... 的形状;不符合的宁可不认,也别拿一个假身份去合并两篇不同的论文
+    return lowered if lowered.startswith("10.") and "/" in lowered else None
+
+
 # ---------------------------------------------------------------- 各数据源
+
+
+def semantic_scholar_to_paper(item: dict) -> dict | None:
+    """把 S2 的一条记录映射成统一的论文形状;缺关键字段返回 None。
+
+    抽成独立函数是为了能脱离网络单测 —— 映射规则(尤其是 DOI 从哪来)是这里最容易错的地方。
+    """
+    external_id = _non_empty(item.get("paperId"))
+    if external_id is None:
+        return None  # 没有 ID 就没法落库去重
+
+    return {
+        "source": "semantic_scholar",
+        "externalId": external_id,
+        "title": _non_empty(item.get("title")) or "(无标题)",
+        "authors": [
+            name
+            for author in (item.get("authors") or [])
+            if (name := _non_empty(author.get("name")))
+        ],
+        "abstractText": _non_empty(item.get("abstract")),
+        "publicationYear": item.get("year"),
+        "venue": _non_empty(item.get("venue")),
+        "url": _non_empty(item.get("url")),
+        # S2 把 DOI 放在 externalIds 里,不在顶层
+        "doi": normalize_doi((item.get("externalIds") or {}).get("DOI")),
+        "citationCount": item.get("citationCount") or 0,
+    }
+
+
+def crossref_to_paper(item: dict) -> dict | None:
+    """把 Crossref 的一条记录映射成统一的论文形状;没有 DOI 返回 None。
+
+    Crossref 的身份就是 DOI,没有它既没法落库也没法跨源认人。
+    """
+    doi = normalize_doi(item.get("DOI"))
+    if doi is None:
+        return None
+
+    date_parts = (item.get("issued") or {}).get("date-parts") or [[None]]
+    return {
+        "source": "crossref",
+        "externalId": doi,
+        "title": _non_empty(item.get("title")) or "(无标题)",
+        "authors": [
+            name
+            for author in (item.get("author") or [])
+            if (name := _non_empty(f"{author.get('given', '')} {author.get('family', '')}"))
+        ],
+        "abstractText": _clean_abstract(item.get("abstract")),
+        "publicationYear": date_parts[0][0],
+        "venue": _non_empty(item.get("container-title")),
+        "url": _non_empty(item.get("URL")),
+        "doi": doi,
+        "citationCount": item.get("is-referenced-by-count") or 0,
+    }
+
+
+def _collect(mapped: list[dict | None], year_from: int | None, year_to: int | None) -> list[dict]:
+    """丢掉映射失败(null)与不符合年份约束的条目。"""
+    return [
+        paper
+        for paper in mapped
+        if paper is not None and _in_year_range(paper["publicationYear"], year_from, year_to)
+    ]
 
 
 def search_semantic_scholar(keywords: str, limit: int,
@@ -148,36 +236,16 @@ def search_semantic_scholar(keywords: str, limit: int,
     params: dict[str, object] = {
         "query": keywords,
         "limit": limit,
-        "fields": "paperId,title,year,authors,abstract,url,citationCount,venue",
+        # externalIds 里带 DOI —— 它是跨源认人的依据,少了它同一篇论文会被存成两行
+        "fields": "paperId,title,year,authors,abstract,url,citationCount,venue,externalIds",
     }
     if year_from is not None or year_to is not None:
         # S2 的年份写法是 "2015-2020" / "2015-" / "-2020"
         params["year"] = f"{year_from or ''}-{year_to or ''}"
 
     data = _fetch(SEMANTIC_SCHOLAR_API, params, "Semantic Scholar")
-
-    papers = []
-    for item in data.get("data") or []:
-        if not item.get("paperId"):
-            continue  # 没有 ID 就没法落库去重,直接跳过
-        papers.append(
-            {
-                "source": "semantic_scholar",
-                "externalId": item["paperId"],
-                "title": _non_empty(item.get("title")) or "(无标题)",
-                "authors": [
-                    name
-                    for author in (item.get("authors") or [])
-                    if (name := _non_empty(author.get("name")))
-                ],
-                "abstractText": _non_empty(item.get("abstract")),
-                "publicationYear": item.get("year"),
-                "venue": _non_empty(item.get("venue")),
-                "url": _non_empty(item.get("url")),
-                "citationCount": item.get("citationCount") or 0,
-            }
-        )
-    return [p for p in papers if _in_year_range(p["publicationYear"], year_from, year_to)]
+    return _collect([semantic_scholar_to_paper(item) for item in (data.get("data") or [])],
+                    year_from, year_to)
 
 
 def search_crossref(keywords: str, limit: int,
@@ -196,31 +264,8 @@ def search_crossref(keywords: str, limit: int,
         params["filter"] = ",".join(date_filters)
 
     data = _fetch(CROSSREF_API, params, "Crossref")
-
-    papers = []
-    for item in data.get("message", {}).get("items", []):
-        doi = _non_empty(item.get("DOI"))
-        if not doi:
-            continue
-        date_parts = (item.get("issued") or {}).get("date-parts") or [[None]]
-        papers.append(
-            {
-                "source": "crossref",
-                "externalId": doi,
-                "title": _non_empty(item.get("title")) or "(无标题)",
-                "authors": [
-                    name
-                    for author in (item.get("author") or [])
-                    if (name := _non_empty(f"{author.get('given', '')} {author.get('family', '')}"))
-                ],
-                "abstractText": _clean_abstract(item.get("abstract")),
-                "publicationYear": date_parts[0][0],
-                "venue": _non_empty(item.get("container-title")),
-                "url": _non_empty(item.get("URL")),
-                "citationCount": item.get("is-referenced-by-count") or 0,
-            }
-        )
-    return [p for p in papers if _in_year_range(p["publicationYear"], year_from, year_to)]
+    return _collect([crossref_to_paper(item) for item in data.get("message", {}).get("items", [])],
+                    year_from, year_to)
 
 
 SOURCES: list[Source] = [

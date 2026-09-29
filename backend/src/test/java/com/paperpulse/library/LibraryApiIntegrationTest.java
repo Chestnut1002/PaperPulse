@@ -468,7 +468,9 @@ class LibraryApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     @DisplayName("F6-25 并发提交同一篇新论文:全部成功,且收敛到同一个 id")
     void concurrentSubmissionOfSamePaperIsSafe() throws Exception {
-        PaperInput input = new PaperInput("semantic_scholar", "CONCURRENT-001",
+        // 刻意不带 DOI:这条用例要验的是 (来源, 外部 ID) 那条唯一约束上的并发恢复,
+        // 不能让它绕到 DOI 那条路径上去
+        PaperInput input = new PaperInput("semantic_scholar", "CONCURRENT-001", null,
                 "并发提交的论文", List.of("Alice"), "摘要", 2024, "NeurIPS", null);
 
         int threads = 8;

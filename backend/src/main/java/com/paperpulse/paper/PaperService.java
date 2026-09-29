@@ -13,6 +13,7 @@ import java.time.Instant;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 
@@ -64,25 +65,25 @@ public class PaperService {
     public Paper resolve(PaperInput input) {
         // 来源校验放在最前面:非法来源连事务都不必开
         PaperSource source = PaperSource.fromKey(input.source());
+        String doi = Doi.normalize(input.doi());
 
         try {
             return Objects.requireNonNull(
-                    writeTransaction.execute(status -> createOrUpdate(source, input)),
+                    writeTransaction.execute(status -> createOrUpdate(source, input, doi)),
                     "写事务没有返回结果");
         } catch (DataIntegrityViolationException ex) {
             // 并发首次提交同一篇论文:另一个请求刚刚把它插进去了,我们撞在唯一约束上。
             // 对方的事务已经提交,所以这里重查必定查得到。
             // 查不到就说明冲突另有原因(比如别的约束),把原异常抛回去,不要吞掉。
-            return paperRepository.findBySourceAndExternalId(source, input.externalId())
-                    .orElseThrow(() -> ex);
+            return findExisting(source, input, doi).orElseThrow(() -> ex);
         }
     }
 
     /** 查到了就更新元数据,没查到就新建。**必须在 {@link #writeTransaction} 里调用。** */
-    private Paper createOrUpdate(PaperSource source, PaperInput input) {
+    private Paper createOrUpdate(PaperSource source, PaperInput input, String doi) {
         Instant now = Instant.now();
 
-        return paperRepository.findBySourceAndExternalId(source, input.externalId())
+        return findExisting(source, input, doi)
                 .map(existing -> {
                     existing.applyMetadata(input, now);
                     return paperRepository.save(existing);
@@ -91,6 +92,26 @@ public class PaperService {
                         // saveAndFlush 而不是 save:要在**这个方法内**就把 INSERT 发出去,
                         // 唯一约束冲突才会在这里浮出来,而不是拖到事务提交时 —— 那时已经没有重查的机会了。
                         paperRepository.saveAndFlush(new Paper(source, input, now)));
+    }
+
+    /**
+     * 找到这篇论文已有的那一行。
+     *
+     * <p><b>有 DOI 时优先按 DOI 查。</b>检索会在 Semantic Scholar 与 Crossref 之间降级,
+     * 同一篇论文在两个来源下的 {@code (source, externalId)} 完全不同,但 DOI 相同 ——
+     * 只按后者查会把它当成两篇,各存一行。用户的收藏、评分、阅读历史引用的是本地 id,
+     * 存成两行就意味着这些数据在两个"同一篇论文"之间分裂。
+     *
+     * <p>没有 DOI 就退回原来的 {@code (source, externalId)},行为与 F6 时完全一致。
+     */
+    private Optional<Paper> findExisting(PaperSource source, PaperInput input, String doi) {
+        if (doi != null) {
+            Optional<Paper> byDoi = paperRepository.findByDoi(doi);
+            if (byDoi.isPresent()) {
+                return byDoi;
+            }
+        }
+        return paperRepository.findBySourceAndExternalId(source, input.externalId());
     }
 
     /** 按 id 取,不存在抛 404。 */

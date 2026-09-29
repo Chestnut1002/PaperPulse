@@ -147,6 +147,34 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("同一篇论文换了数据源再检索,仍复用同一行")
+    void crossSourceSearchReusesSameRow() {
+        String token = registerAndLogin("searcher");
+
+        // 第一次:S2 限流,降级到了 Crossref
+        AI_STUB.respondWith(200, """
+                {"query": "q", "plan": {"keywords": "k", "rationale": "r"}, "sourceLabel": "Crossref",
+                 "papers": [{"source": "crossref", "externalId": "10.1000/abc", "doi": "10.1000/abc",
+                             "title": "跨源论文", "authors": [], "citationCount": 0}]}
+                """);
+        long first = search(token, Map.of("query", "对比学习"))
+                .at("papers").get(0).get("id").asLong();
+
+        // 第二次:S2 恢复了,同一篇论文这次来自 S2 —— 来源与外部 ID 都变了,但 DOI 没变
+        AI_STUB.respondWith(200, """
+                {"query": "q", "plan": {"keywords": "k", "rationale": "r"},
+                 "sourceLabel": "Semantic Scholar",
+                 "papers": [{"source": "semantic_scholar", "externalId": "S2-xyz", "doi": "10.1000/abc",
+                             "title": "跨源论文", "authors": [], "citationCount": 0}]}
+                """);
+        long second = search(token, Map.of("query", "对比学习"))
+                .at("papers").get(0).get("id").asLong();
+
+        assertThat(second).as("换了源还是同一篇论文,就不该多出一行").isEqualTo(first);
+        assertThat(paperCount()).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("元数据不全的条目被跳过,其余照常返回")
     void skipsIncompletePapers() {
         AI_STUB.respondWith(200, """

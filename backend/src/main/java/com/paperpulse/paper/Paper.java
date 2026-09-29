@@ -27,15 +27,24 @@ import java.util.List;
  * <p><b>一篇论文在库里只有一份。</b>唯一约束 {@code (source, external_id)} 保证多个用户收藏
  * 同一篇论文时不会各存一份,它们指向同一行。收藏/历史/评分表引用的是本表的主键。
  *
+ * <p><b>跨来源的同一篇论文也应当只有一份</b>,靠的是 DOI(见 {@link #doi})。
+ * 检索会在 Semantic Scholar 与 Crossref 之间降级,同一个查询昨天走 A、今天走 B,
+ * 只按来源去重就会把同一篇论文存成两行,用户的收藏与评分随之分裂。
+ *
  * <p><b>元数据是可更新的,但不接受"用空值覆盖"。</b>不同来源、不同时间返回的字段完整度不一样
  * (有的没有摘要,有的没有会议名)。{@link #applyMetadata} 只覆盖非空字段,
  * 免得一次信息不全的请求把已有的摘要抹掉。
  */
 @Entity
 @Table(name = "paper",
-        uniqueConstraints = @UniqueConstraint(
-                name = "uk_paper_source_external_id",
-                columnNames = {"source", "external_id"}))
+        uniqueConstraints = {
+                @UniqueConstraint(
+                        name = "uk_paper_source_external_id",
+                        columnNames = {"source", "external_id"}),
+                @UniqueConstraint(
+                        name = "uk_paper_doi",
+                        columnNames = {"doi"})
+        })
 public class Paper {
 
     @Id
@@ -50,6 +59,17 @@ public class Paper {
     /** 来源库里的 ID(如 S2 的 paperId、arXiv 的编号)。 */
     @Column(name = "external_id", nullable = false, length = 128)
     private String externalId;
+
+    /**
+     * DOI。**跨源身份**:同一篇论文在 Semantic Scholar 和 Crossref 下的来源与外部 ID 都不同,
+     * 但 DOI 相同 —— 只按 {@code (source, external_id)} 去重会把同一篇论文存成两行,
+     * 用户的收藏 / 评分 / 阅读历史也就跟着分裂。
+     *
+     * <p>可空,且唯一索引允许多行 NULL(MySQL 如此),所以没有 DOI 的论文互不冲突,
+     * 它们继续走 {@code (source, external_id)} 那套。
+     */
+    @Column(name = "doi", length = 128)
+    private String doi;
 
     @Column(nullable = false, length = 512)
     private String title;
@@ -91,6 +111,7 @@ public class Paper {
     public Paper(PaperSource source, PaperInput input, Instant now) {
         this.source = source;
         this.externalId = input.externalId();
+        this.doi = Doi.normalize(input.doi());
         this.metadataUpdatedAt = now;
         // 构造函数里直接赋值,不走 applyMetadata —— 新建的行没有"已有数据"需要保护。
         this.title = input.title();
@@ -112,6 +133,10 @@ public class Paper {
      */
     public boolean applyMetadata(PaperInput input, Instant now) {
         boolean changed = false;
+
+        // DOI 也在这里补齐:先入库的那次可能没带 DOI(比如降级到某个字段更少的源),
+        // 后来拿到了就补上。**这不会覆盖已有的 DOI** —— 同一篇论文的 DOI 只会有一个。
+        changed |= replaceIfPresent(doi, Doi.normalize(input.doi()), value -> doi = value);
 
         changed |= replaceIfPresent(title, input.title(), value -> title = value);
         changed |= replaceIfPresent(abstractText, input.abstractText(), value -> abstractText = value);
@@ -155,6 +180,10 @@ public class Paper {
 
     public String getExternalId() {
         return externalId;
+    }
+
+    public String getDoi() {
+        return doi;
     }
 
     public String getTitle() {

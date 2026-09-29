@@ -104,6 +104,7 @@ public class SearchService {
         PaperInput input = new PaperInput(
                 paper.source(),
                 paper.externalId(),
+                paper.doi(),
                 paper.title(),
                 paper.authors(),
                 paper.abstractText(),

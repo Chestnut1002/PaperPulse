@@ -20,6 +20,7 @@ import java.util.List;
  *
  * @param source          来源库的 key(见 {@code PaperSource})
  * @param externalId      来源库里的 ID
+ * @param doi             DOI,跨源身份;可为空
  * @param title           标题
  * @param authors         作者名列表,可为空
  * @param abstractText    摘要,可空
@@ -36,6 +37,10 @@ public record PaperInput(
         @NotBlank(message = "论文的外部 ID 不能为空")
         @Size(max = 128, message = "外部 ID 过长")
         String externalId,
+
+        // 跨源身份。可空(不是所有来源都给 DOI),但给了就要归一到同一写法,否则认不出是同一篇
+        @Size(max = 128, message = "DOI 过长")
+        String doi,
 
         @NotBlank(message = "论文标题不能为空")
         @Size(max = 512, message = "标题过长")
