@@ -1,7 +1,7 @@
 """检索数据源的纯逻辑:归一化、年份过滤、去重、条目映射。不联网。"""
 
 from app.sources import (
-    _clean_abstract,
+    _clean_text,
     _dedupe,
     _in_year_range,
     _non_empty,
@@ -48,25 +48,31 @@ class TestDedupe:
         assert _dedupe([]) == []
 
 
-class TestCleanAbstract:
+class TestCleanText:
     def test_空值返回_None(self):
         # 空串进库比 null 更麻烦,统一成 None
-        assert _clean_abstract(None) is None
-        assert _clean_abstract("") is None
+        assert _clean_text(None) is None
+        assert _clean_text("") is None
 
     def test_去掉_JATS_标签(self):
         raw = "<jats:p>Context-aware systems</jats:p><jats:p>integrate signals.</jats:p>"
-        assert _clean_abstract(raw) == "Context-aware systems integrate signals."
+        assert _clean_text(raw) == "Context-aware systems integrate signals."
 
     def test_解开两层转义(self):
         # Crossref 有些记录被转义了两层:&lt;p&gt; 要先还原成 <p> 再去标签
-        assert _clean_abstract("&lt;p&gt;Hello&lt;/p&gt;") == "Hello"
+        assert _clean_text("&lt;p&gt;Hello&lt;/p&gt;") == "Hello"
+
+    def test_还原标题里的与号(self):
+        # 实测 Crossref 的标题里就有这种:"…Models &amp; iContracts"
+        assert _clean_text("Explainable Large Language Models &amp; iContracts") == (
+            "Explainable Large Language Models & iContracts"
+        )
 
     def test_压缩多余空白(self):
-        assert _clean_abstract("a\n\n   b\t c ") == "a b c"
+        assert _clean_text("a\n\n   b\t c ") == "a b c"
 
     def test_只有标签时返回_None(self):
-        assert _clean_abstract("<jats:p></jats:p>") is None
+        assert _clean_text("<jats:p></jats:p>") is None
 
 
 class TestNonEmpty:
@@ -192,3 +198,8 @@ class TestCrossrefMapping:
     def test_缺少发表日期时年份为_None(self):
         item = {key: value for key, value in CROSSREF_ITEM.items() if key != "issued"}
         assert crossref_to_paper(item)["publicationYear"] is None
+
+    def test_标题里的_HTML_转义被还原(self):
+        # 不还原的话,界面上会原样显示 "&amp;"
+        item = {**CROSSREF_ITEM, "title": ["Models &amp; iContracts"]}
+        assert crossref_to_paper(item)["title"] == "Models & iContracts"

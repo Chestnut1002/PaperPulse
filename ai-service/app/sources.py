@@ -85,8 +85,12 @@ def _fetch(url: str, params: dict, source_label: str) -> dict:
     raise RuntimeError(f"{source_label} 重试后仍然失败:{last_error}")
 
 
-def _clean_abstract(raw: str | None) -> str | None:
-    """把摘要里的 HTML / XML 标签清成纯文本(Crossref 的摘要是 JATS 格式)。"""
+def _clean_text(raw: str | None) -> str | None:
+    """还原 HTML 转义、去掉标签、压缩空白。
+
+    **标题也要过这一道**:Crossref 的标题里常见 `&amp;`(实测「Explainable Large Language
+    Models &amp; iContracts」),不还原就会原样显示在界面上。摘要则是 JATS 格式,带 `<jats:p>` 之类的标签。
+    """
     if not raw:
         return None
     text = html.unescape(html.unescape(raw))  # 有的记录被转义了两层(&lt;p&gt;)
@@ -178,15 +182,15 @@ def semantic_scholar_to_paper(item: dict) -> dict | None:
     return {
         "source": "semantic_scholar",
         "externalId": external_id,
-        "title": _non_empty(item.get("title")) or "(无标题)",
+        "title": _clean_text(item.get("title")) or "(无标题)",
         "authors": [
             name
             for author in (item.get("authors") or [])
             if (name := _non_empty(author.get("name")))
         ],
-        "abstractText": _non_empty(item.get("abstract")),
+        "abstractText": _clean_text(item.get("abstract")),
         "publicationYear": item.get("year"),
-        "venue": _non_empty(item.get("venue")),
+        "venue": _clean_text(item.get("venue")),
         "url": _non_empty(item.get("url")),
         # S2 把 DOI 放在 externalIds 里,不在顶层
         "doi": normalize_doi((item.get("externalIds") or {}).get("DOI")),
@@ -207,15 +211,15 @@ def crossref_to_paper(item: dict) -> dict | None:
     return {
         "source": "crossref",
         "externalId": doi,
-        "title": _non_empty(item.get("title")) or "(无标题)",
+        "title": _clean_text(_non_empty(item.get("title"))) or "(无标题)",
         "authors": [
             name
             for author in (item.get("author") or [])
             if (name := _non_empty(f"{author.get('given', '')} {author.get('family', '')}"))
         ],
-        "abstractText": _clean_abstract(item.get("abstract")),
+        "abstractText": _clean_text(item.get("abstract")),
         "publicationYear": date_parts[0][0],
-        "venue": _non_empty(item.get("container-title")),
+        "venue": _clean_text(_non_empty(item.get("container-title"))),
         "url": _non_empty(item.get("URL")),
         "doi": doi,
         "citationCount": item.get("is-referenced-by-count") or 0,
