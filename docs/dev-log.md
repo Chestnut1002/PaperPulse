@@ -1963,6 +1963,23 @@ python scratch/search_smoke.py
 
 数据库确认 `doi` 列已建、已有行被回填、没有同一身份对应两个 id。
 
+### 问题五(测试抓到的,当时漏记):空值归一化只取了列表首元素
+
+补 DOI 规范化的测试时顺手给 `_non_empty` 加了用例,炸出一条:
+
+```python
+_non_empty(["", "Second"])   # 期望 "Second",实际 None
+```
+
+原实现是 `value[0] if value else None` —— **只取列表的第一个元素**。
+Crossref 的 `title` / `container-title` 都是数组,正常情况下第一个就是标题;
+但遇到 `["", "真实标题"]` 就会把有值判成没值,**论文标题会直接变成"(无标题)"**。
+
+改成取第一个非空元素。**这不是我想到的,是"顺手补个用例"冒出来的** ——
+而且它藏在一个已经被检索链路用着的函数里。
+
+> 补记:本条在当天写日志时漏掉了,事后核对记录覆盖情况时才发现。
+
 ### 问题四(顺手发现):标题里的 HTML 转义没被还原
 
 清理开发库时看到一条论文标题是 `Explainable Large Language Models &amp; iContracts` ——
