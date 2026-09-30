@@ -7,7 +7,7 @@
 | REQ-003 | 论文精读问答:锚点+动态截断 / RAG,回答带引用 | High | TODO |
 | REQ-004 | 个性化论文推荐:行为反馈闭环 + 探索位(diversity_ratio) | High | Doing |
 | REQ-005 | 可解释推荐理由(每条推荐附"为什么推荐") | Medium | TODO |
-| REQ-006 | 离线评测:embedding / RecBole SASRec / LLM 打分对比(Recall@K、NDCG@K) | Medium | TODO |
+| REQ-006 | 离线评测:embedding / RecBole SASRec / LLM 打分对比(Recall@K、NDCG@K) | Medium | Doing |
 
 > 状态取值:TODO / Doing / Done。
 > 需求背景与详细设计见 docs/design/ 与 docs/dev-log.md。
@@ -102,6 +102,24 @@ REQ-001 后端接口稳定后开始,按功能点逐个交付。
 > 这件事需要先把评测建起来(REQ-006)—— 否则改动打分公式之后,
 > 无法判断是变好了还是变差了。**所以顺序上它排在 REQ-006 之后。**
 
-## REQ-003、005、006 拆分
+## REQ-006 拆分与进度
 
-尚未开始,待 REQ-004 完成后按优先级依次拆分。
+| 编号 | 功能点 | 状态 | 完成日期 |
+| ---- | ---- | ---- | ---- |
+| E1 | 评测集构造(引用关系作代理)+ 指标 + 随机/热门对照 + 接入我们的算法 | ✅ Done | 2026-09-30 |
+| E2 | BGE embedding 基线 | ⬜ TODO | — |
+| E3 | SASRec(RecBole) | ⬜ TODO | — |
+| E4 | LLM 生成式推荐 | ⬜ TODO | — |
+
+> E1 于 2026-09-30 完成:设计文档 `docs/design/F11-离线评测.md`,实验记录 `experiments/experiment-002.md`,
+> 明细见 `docs/dev-log.md` 的「2026-09-30(第八次)」。
+> Python 测试增至 **96 条**(评测相关 30 条)。
+>
+> **先做 E1 的理由**:如果尺子本身不可靠(指标算错、评测集有偏),上面接再多方法都是白搭。
+> 用"随机"和"热门"两个已知强度的对照校准它 —— 阶梯成立(随机 < 热门 ≪ 我们的算法),尺子才是活的。
+>
+> **E4 做完,REQ-006 的原文("embedding / RecBole SASRec / LLM 打分对比")才算做全。**
+
+## REQ-003、005 拆分
+
+尚未开始,待 REQ-006 完成后按优先级依次拆分。

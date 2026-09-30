@@ -7,6 +7,8 @@ backend/target/
 __pycache__/
 *.py[cod]
 ai-service/.venv/
+# 本机缓存(如离线评测抓下来的原始数据)
+ai-service/.cache/
 
 # Node / Vite
 node_modules/
