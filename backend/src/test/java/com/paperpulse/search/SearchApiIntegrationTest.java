@@ -175,6 +175,30 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("上游返回内容相同的两条时,结果里只出现一篇")
+    void duplicateEntriesInUpstreamResultCollapseToOne() {
+        // 实测 S2 会返回两条外部 ID 不同、标题作者年份完全相同的记录。
+        // 上游只能按身份和 DOI 去重,认不出它们是同一篇 —— 判定发生在落库时的跨源合并,
+        // 所以结果列表必须在那之后再按本地 id 去重一次。
+        AI_STUB.respondWith(200, """
+                {"query": "q", "plan": {"keywords": "k", "rationale": "r"}, "sourceLabel": "S2",
+                 "papers": [
+                   {"source": "semantic_scholar", "externalId": "S2-aaa", "title": "同一篇论文",
+                    "authors": ["Wei Li"], "publicationYear": 2024, "citationCount": 1},
+                   {"source": "semantic_scholar", "externalId": "S2-bbb", "title": "同一篇论文",
+                    "authors": ["Wei Li"], "publicationYear": 2024, "citationCount": 2}
+                 ]}
+                """);
+        String token = registerAndLogin("searcher");
+
+        ApiClient.Response response = search(token, Map.of("query", "对比学习"));
+
+        assertThat(response.status()).as(response.describe()).isEqualTo(200);
+        assertThat(response.at("papers").size()).as("同一篇不该在结果里出现两次").isEqualTo(1);
+        assertThat(paperCount()).isEqualTo(1);
+    }
+
+    @Test
     @DisplayName("元数据不全的条目被跳过,其余照常返回")
     void skipsIncompletePapers() {
         AI_STUB.respondWith(200, """

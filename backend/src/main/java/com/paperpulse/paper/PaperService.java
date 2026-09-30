@@ -26,6 +26,7 @@ import java.util.stream.Collectors;
 public class PaperService {
 
     private final PaperRepository paperRepository;
+    private final PaperAliasRepository paperAliasRepository;
 
     /**
      * 用于 {@link #resolve} 的写事务,**刻意用编程式事务而不是 {@code @Transactional}`**。
@@ -45,8 +46,11 @@ public class PaperService {
      */
     private final TransactionTemplate writeTransaction;
 
-    public PaperService(PaperRepository paperRepository, PlatformTransactionManager transactionManager) {
+    public PaperService(PaperRepository paperRepository,
+                        PaperAliasRepository paperAliasRepository,
+                        PlatformTransactionManager transactionManager) {
         this.paperRepository = paperRepository;
+        this.paperAliasRepository = paperAliasRepository;
         this.writeTransaction = new TransactionTemplate(transactionManager);
         this.writeTransaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
     }
@@ -75,43 +79,109 @@ public class PaperService {
             // 并发首次提交同一篇论文:另一个请求刚刚把它插进去了,我们撞在唯一约束上。
             // 对方的事务已经提交,所以这里重查必定查得到。
             // 查不到就说明冲突另有原因(比如别的约束),把原异常抛回去,不要吞掉。
-            return findExisting(source, input, doi).orElseThrow(() -> ex);
+            return findByIdentity(source, input, doi).orElseThrow(() -> ex);
         }
     }
 
-    /** 查到了就更新元数据,没查到就新建。**必须在 {@link #writeTransaction} 里调用。** */
+    /**
+     * 查到了就更新元数据,没查到就新建。**必须在 {@link #writeTransaction} 里调用。**
+     *
+     * <p>顺序是"先按身份查,查不到再看是不是某篇已有论文的另一个版本":
+     * 前者是同一个身份重复提交(原有行为),后者才是跨源合并。
+     */
     private Paper createOrUpdate(PaperSource source, PaperInput input, String doi) {
         Instant now = Instant.now();
 
-        return findExisting(source, input, doi)
-                .map(existing -> {
-                    existing.applyMetadata(input, now);
-                    return paperRepository.save(existing);
-                })
-                .orElseGet(() ->
-                        // saveAndFlush 而不是 save:要在**这个方法内**就把 INSERT 发出去,
-                        // 唯一约束冲突才会在这里浮出来,而不是拖到事务提交时 —— 那时已经没有重查的机会了。
-                        paperRepository.saveAndFlush(new Paper(source, input, now)));
+        Optional<Paper> byIdentity = findByIdentity(source, input, doi);
+        if (byIdentity.isPresent()) {
+            Paper existing = byIdentity.get();
+            existing.applyMetadata(input, now);
+            return paperRepository.save(existing);
+        }
+
+        Optional<Paper> otherVersion = findOtherVersion(input);
+        if (otherVersion.isPresent()) {
+            return mergeInto(otherVersion.get(), source, input, now);
+        }
+
+        // saveAndFlush 而不是 save:要在**这个方法内**就把 INSERT 发出去,
+        // 唯一约束冲突才会在这里浮出来,而不是拖到事务提交时 —— 那时已经没有重查的机会了。
+        return paperRepository.saveAndFlush(new Paper(source, input, now));
     }
 
     /**
-     * 找到这篇论文已有的那一行。
+     * 把这次的记录并进已有的那一行。
      *
-     * <p><b>有 DOI 时优先按 DOI 查。</b>检索会在 Semantic Scholar 与 Crossref 之间降级,
-     * 同一篇论文在两个来源下的 {@code (source, externalId)} 完全不同,但 DOI 相同 ——
-     * 只按后者查会把它当成两篇,各存一行。用户的收藏、评分、阅读历史引用的是本地 id,
-     * 存成两行就意味着这些数据在两个"同一篇论文"之间分裂。
+     * <p><b>元数据用"只补空缺"而不是"覆盖"</b>:两个版本的差异是变体不是更正
+     * (arXiv 版标题带"(Extended Version)"),用覆盖语义会让标题在两次检索之间来回翻。
      *
-     * <p>没有 DOI 就退回原来的 {@code (source, externalId)},行为与 F6 时完全一致。
+     * <p><b>记一条别名</b> —— 少了它合并就留不住:下次再遇到这个身份,
+     * 按 {@code (来源, 外部 ID)} 查不到行,又会新建一个。
      */
-    private Optional<Paper> findExisting(PaperSource source, PaperInput input, String doi) {
+    private Paper mergeInto(Paper target, PaperSource source, PaperInput input, Instant now) {
+        target.fillMissing(input, now);
+        Paper saved = paperRepository.save(target);
+
+        paperAliasRepository.save(
+                new PaperAlias(saved.getId(), source, input.externalId(), now));
+        return saved;
+    }
+
+    /**
+     * 找到这篇论文已有的那一行(按身份)。
+     *
+     * <p>三级,由强到弱:
+     * <ol>
+     *   <li><b>DOI</b> —— 最强的跨源信号:两个源引用同一条已发表记录时,来源与外部 ID 都不同,但 DOI 相同</li>
+     *   <li><b>(来源, 外部 ID)</b> —— 同一身份重复提交,原有行为</li>
+     *   <li><b>别名</b> —— 这个身份之前被合并过,指向当时采用的那一行</li>
+     * </ol>
+     */
+    private Optional<Paper> findByIdentity(PaperSource source, PaperInput input, String doi) {
         if (doi != null) {
             Optional<Paper> byDoi = paperRepository.findByDoi(doi);
             if (byDoi.isPresent()) {
                 return byDoi;
             }
         }
-        return paperRepository.findBySourceAndExternalId(source, input.externalId());
+
+        Optional<Paper> byExternalId =
+                paperRepository.findBySourceAndExternalId(source, input.externalId());
+        if (byExternalId.isPresent()) {
+            return byExternalId;
+        }
+
+        return paperAliasRepository.findBySourceAndExternalId(source, input.externalId())
+                .flatMap(alias -> paperRepository.findById(alias.getPaperId()));
+    }
+
+    /**
+     * 这个身份虽然是新的,但内容可能已经以另一个身份在库里了 —— 找那一行。
+     *
+     * <p>只对**跨源**有意义:同一来源下的不同外部 ID 本来就是两篇(来源自己的编号体系)。
+     * 不过这条不加限制也不会有害 —— 同一来源里标题、作者、年份都相同且 ID 不同的两条,
+     * 本来就是那一边的数据问题。
+     *
+     * <p>规则见 {@link PaperMatcher}:标题 + 作者 + 年份三条件全中才算,
+     * 缺任何一项都判为否 —— **宁可多一行,不可合错**。
+     */
+    private Optional<Paper> findOtherVersion(PaperInput input) {
+        Integer year = input.publicationYear();
+        String titleKey = PaperMatcher.titleKey(input.title());
+        if (year == null || titleKey.isEmpty()) {
+            return Optional.empty();
+        }
+
+        return paperRepository
+                .findByTitleKeyAndPublicationYearBetween(
+                        titleKey,
+                        year - PaperMatcher.YEAR_TOLERANCE,
+                        year + PaperMatcher.YEAR_TOLERANCE)
+                .stream()
+                .filter(candidate -> PaperMatcher.matches(
+                        candidate.getTitle(), candidate.getAuthors(), candidate.getPublicationYear(),
+                        input.title(), input.authors(), year))
+                .findFirst();
     }
 
     /** 按 id 取,不存在抛 404。 */

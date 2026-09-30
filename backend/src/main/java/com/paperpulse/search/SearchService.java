@@ -11,7 +11,9 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 
 /**
@@ -54,10 +56,10 @@ public class SearchService {
         AiSearchResponse found = aiSearchClient.search(request.query(), limit);
         AiSearchResponse.Plan plan = found.plan();
 
-        List<PaperResponse> papers = papersOf(found).stream()
+        List<PaperResponse> papers = dedupeById(papersOf(found).stream()
                 .filter(SearchService::isComplete)
                 .map(this::persist)
-                .toList();
+                .toList());
 
         return new PaperSearchResponse(
                 found.query(),
@@ -65,6 +67,24 @@ public class SearchService {
                 plan == null ? "" : Objects.toString(plan.rationale(), ""),
                 found.sourceLabel(),
                 papers);
+    }
+
+    /**
+     * 按**落库后的本地 id** 去重。
+     *
+     * <p>为什么在上游去过重了这里还要再做一次:上游只能按 `(来源, 外部 ID)` 和 DOI 去重,
+     * 而这两条都不足以判定"同一篇"。真正的判定发生在落库时 —— 那里的跨源合并会认出
+     * "标题、作者、年份都相同"的两个身份其实是同一篇,并把它们并到同一行。
+     *
+     * <p>不这样做的话,用户会在一次检索结果里看到同一篇论文出现两次
+     * (实测 S2 就会返回两条外部 ID 不同、内容相同的记录)。
+     */
+    private static List<PaperResponse> dedupeById(List<PaperResponse> papers) {
+        Map<Long, PaperResponse> unique = new LinkedHashMap<>();
+        for (PaperResponse paper : papers) {
+            unique.putIfAbsent(paper.id(), paper);
+        }
+        return List.copyOf(unique.values());
     }
 
     private static List<AiSearchResponse.Paper> papersOf(AiSearchResponse found) {

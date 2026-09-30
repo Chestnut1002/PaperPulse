@@ -65,6 +65,8 @@ public abstract class AbstractIntegrationTest {
         jdbcTemplate.execute("DELETE FROM paper_favorite");
         jdbcTemplate.execute("DELETE FROM paper_read_history");
         jdbcTemplate.execute("DELETE FROM paper_rating");
+        // 别名引用 paper,得在它之前删 —— 不清的话上个用例留下的合并关系会带进下一个用例
+        jdbcTemplate.execute("DELETE FROM paper_alias");
         jdbcTemplate.execute("DELETE FROM paper");
         jdbcTemplate.execute("DELETE FROM user_interest");
         jdbcTemplate.execute("DELETE FROM users");

@@ -9,6 +9,7 @@ import jakarta.persistence.Enumerated;
 import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
+import jakarta.persistence.Index;
 import jakarta.persistence.Table;
 import jakarta.persistence.UniqueConstraint;
 
@@ -44,7 +45,9 @@ import java.util.List;
                 @UniqueConstraint(
                         name = "uk_paper_doi",
                         columnNames = {"doi"})
-        })
+        },
+        // 跨源合并要按"归一化标题 + 年份"找同一篇的另一个版本,没有索引就得全表扫
+        indexes = @Index(name = "idx_paper_title_key", columnList = "title_key"))
 public class Paper {
 
     @Id
@@ -73,6 +76,15 @@ public class Paper {
 
     @Column(nullable = false, length = 512)
     private String title;
+
+    /**
+     * 归一化后的标题,供跨源合并按标题查询({@link PaperMatcher#titleKey})。
+     *
+     * <p>之所以单独存一列而不是查的时候现算:现算就得对全表做函数运算,索引用不上。
+     * 它必须与 {@link #title} **同时更新**,否则会出现"标题改了但键没改"的静默不一致。
+     */
+    @Column(name = "title_key", length = 512)
+    private String titleKey;
 
     /** 作者名列表,以 JSON 数组存进一个文本列。见 {@link StringListConverter}。 */
     @Convert(converter = StringListConverter.class)
@@ -115,6 +127,7 @@ public class Paper {
         this.metadataUpdatedAt = now;
         // 构造函数里直接赋值,不走 applyMetadata —— 新建的行没有"已有数据"需要保护。
         this.title = input.title();
+        this.titleKey = PaperMatcher.titleKey(input.title());
         this.authors = List.copyOf(input.authors());
         this.abstractText = input.abstractText();
         this.publicationYear = input.publicationYear();
@@ -138,7 +151,11 @@ public class Paper {
         // 后来拿到了就补上。**这不会覆盖已有的 DOI** —— 同一篇论文的 DOI 只会有一个。
         changed |= replaceIfPresent(doi, Doi.normalize(input.doi()), value -> doi = value);
 
-        changed |= replaceIfPresent(title, input.title(), value -> title = value);
+        // 标题与 title_key 必须一起改
+        changed |= replaceIfPresent(title, input.title(), value -> {
+            title = value;
+            titleKey = PaperMatcher.titleKey(value);
+        });
         changed |= replaceIfPresent(abstractText, input.abstractText(), value -> abstractText = value);
         changed |= replaceIfPresent(venue, input.venue(), value -> venue = value);
         changed |= replaceIfPresent(url, input.url(), value -> url = value);
@@ -154,6 +171,56 @@ public class Paper {
             this.metadataUpdatedAt = now;
         }
         return changed;
+    }
+
+    /**
+     * 只补空缺、不覆盖已有值。
+     *
+     * <p><b>用在跨源合并上。</b>{@link #applyMetadata} 是"不同就覆盖",那套语义在这里会让标题来回翻:
+     * arXiv 版的标题带"(Extended Version)",覆盖一次;下次正式版来了又覆盖回去。
+     * 而两个版本的差异是**变体**,不是**更正**。
+     *
+     * <p>效果正好是互补的:正式版补上会议名,预印本补上摘要。
+     *
+     * @return 是否有字段真的被补上
+     */
+    public boolean fillMissing(PaperInput input, Instant now) {
+        boolean changed = false;
+
+        changed |= fillIfAbsent(doi, Doi.normalize(input.doi()), value -> doi = value);
+        changed |= fillIfAbsent(title, input.title(), value -> {
+            title = value;
+            titleKey = PaperMatcher.titleKey(value);
+        });
+        changed |= fillIfAbsent(abstractText, input.abstractText(), value -> abstractText = value);
+        changed |= fillIfAbsent(venue, input.venue(), value -> venue = value);
+        changed |= fillIfAbsent(url, input.url(), value -> url = value);
+        changed |= fillIfAbsent(publicationYear, input.publicationYear(), value -> publicationYear = value);
+
+        if (getAuthors().isEmpty() && !input.authors().isEmpty()) {
+            this.authors = List.copyOf(input.authors());
+            changed = true;
+        }
+
+        if (changed) {
+            this.metadataUpdatedAt = now;
+        }
+        return changed;
+    }
+
+    /** 当前值为空、且新值非空时才写入。返回是否写入。 */
+    private static <T> boolean fillIfAbsent(T current, T incoming,
+                                            java.util.function.Consumer<T> setter) {
+        boolean hasCurrent = current != null && !(current instanceof String text && text.isBlank());
+        if (hasCurrent) {
+            return false;
+        }
+        boolean hasIncoming = incoming != null && !(incoming instanceof String text && text.isBlank());
+        if (!hasIncoming) {
+            return false;
+        }
+        setter.accept(incoming);
+        return true;
     }
 
     /** 新值非空(字符串还要非空白)时才写入。返回是否写入。 */
@@ -188,6 +255,10 @@ public class Paper {
 
     public String getTitle() {
         return title;
+    }
+
+    public String getTitleKey() {
+        return titleKey;
     }
 
     public List<String> getAuthors() {
