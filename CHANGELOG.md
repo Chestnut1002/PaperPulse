@@ -279,6 +279,15 @@
   - 历史里已有的旧值**不重写**:口令早已轮换、密钥改完后不再存在,两者都不是活凭据;
     重写是第四次 force push,而 GitHub 的 fork 与缓存未必能立刻清掉,做了也不保证"彻底消失"。
     管用的是"以后进不去",不是"以前抹干净" —— 这也是钩子存在的理由
+- **配置模板会把人引到错的地方**(`.env.example` 重写)
+  - 原文件把三个组件的变量混在一张清单里,但**只有 Docker Compose 会读根目录的 `.env`**:
+    ai-service 读的是 `ai-service/.env`(`app/config.py`),backend **不读任何 `.env`**
+    (Spring 没有这个机制)。照原文件填 `DEEPSEEK_API_KEY` 或 `DB_PASSWORD`,**什么都不会发生,也不报错**
+  - `.env.example` 改为一份**配置指引**:开头一张表讲清三个组件各读哪个文件,
+    每段标明读者与必填与否,并给出 `application-local.yml` 的可照抄片段
+  - 新增 `ai-service/.env.example` —— ai-service 真正读取的那个文件此前没有模板
+  - README 补「配置放哪里」对照表;删掉原写在**前端**小节下、却让读者"参照 `.env.example`"的那句
+    (前端不读任何环境变量)
 
 ## v0.1.0 (2026-09-10)
 

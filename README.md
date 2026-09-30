@@ -80,7 +80,22 @@ cd frontend
 npm install && npm run dev
 ```
 
-环境变量参照 [`.env.example`](.env.example)。
+### 配置放哪里
+
+三个组件**各读各的文件**,填错地方不会报错,只会静默不生效:
+
+| 组件 | 读哪个文件 | 模板 |
+| ---- | ---- | ---- |
+| Docker Compose(MySQL) | 仓库根目录 `.env` | [`.env.example`](.env.example) |
+| ai-service | `ai-service/.env` | [`ai-service/.env.example`](ai-service/.env.example) |
+| backend | `backend/src/main/resources/application-local.yml` | 键名见 [`application.yml`](backend/src/main/resources/application.yml) |
+| frontend | — 不需要配置 | — |
+
+根目录那份 `.env` **只有 Docker Compose 读**;backend 不读 `.env`,它的数据库口令和
+`JWT_SECRET` 要写进 `application-local.yml`(或导出为环境变量)。
+用 docker compose 起 MySQL 时,`MYSQL_ROOT_PASSWORD` 与 backend 的 `DB_PASSWORD` 要填同一个值。
+
+[`.env.example`](.env.example) 的开头把这三条路径完整说明了一遍。
 
 ## API
 
