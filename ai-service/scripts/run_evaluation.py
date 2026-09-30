@@ -21,8 +21,12 @@ CACHE_DIR = Path(__file__).resolve().parents[1] / ".cache" / "eval"
 if __name__ == "__main__":
     sys.stdout.reconfigure(encoding="utf-8")
 
+    with_embeddings = "--embeddings" in sys.argv
+    if not with_embeddings:
+        print("(只跑前三个方法;加 --embeddings 会额外跑 BGE 基线 —— 首次要下载约 2GB 模型)")
+
     print("构造评测集(首次会联网抓 OpenAlex,之后走本机缓存)…")
-    table, cases = build_and_run(CACHE_DIR, BuildConfig())
+    table, cases = build_and_run(CACHE_DIR, BuildConfig(), with_embeddings=with_embeddings)
     print()
     print(table)
     print()
@@ -30,4 +34,5 @@ if __name__ == "__main__":
     print("  · 引用关系是代理信号,不等于真实偏好")
     print("  · 兴趣关键词取自 OpenAlex 主题词表,与线上标签词表不是同一套")
     print("  · 评的是**排序**(固定候选池),线上还多一步按标签检索取候选")
+    print("  · embedding 用的是标题 + 主题(没有摘要),线上有摘要可用")
     print("  · 样本量受接口限流约束,结论的统计显著性有限")

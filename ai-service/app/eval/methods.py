@@ -7,6 +7,7 @@ embedding / SASRec / LLM 是后面的阶段。
 import random
 from typing import Protocol
 
+from .embeddings import cosine
 from .models import Candidate, EvalUser
 
 # 与生产端同一套常数。改了一边要同步另一边 —— 见设计文档 3.5 的适配说明。
@@ -48,6 +49,53 @@ def rank_ours(candidates: list[Candidate], user: EvalUser) -> list[str]:
     # 同分时按 id 排,保证同一份数据每次跑出的顺序一致
     scored.sort(key=lambda pair: (-pair[0], pair[1]))
     return [paper_id for _, paper_id in scored]
+
+
+class EmbeddingRanker:
+    """BGE embedding 基线:用户兴趣向量 = 历史论文向量的平均,按 cosine 排序。
+
+    技术选型文档里写的"基线 1(传统)"就是它。
+
+    <p>**向量在构造时一次性算好**:同一篇论文会出现在多个用户的候选池里,
+    在排序里边算边编码会把同一篇重复算很多遍。
+
+    <p>用**平均**而不是加权:这是最标准的做法。不去堆和它无关的调优 ——
+    基线要好用,但更要"标准",否则比较就变成了"我们调过的 vs 没调过的"。
+    """
+
+    def __init__(self, vectors: dict[str, list[float]]):
+        self._vectors = vectors
+
+    def __call__(self, candidates: list[Candidate], user: EvalUser) -> list[str]:
+        interest = self._user_vector(user)
+        if interest is None:
+            # 历史论文一个向量都没有 —— 排不出偏好,保持原序
+            return [candidate.id for candidate in candidates]
+
+        scored = [
+            (cosine(interest, self._vectors[candidate.id]), candidate.id)
+            if candidate.id in self._vectors
+            else (-1.0, candidate.id)
+            for candidate in candidates
+        ]
+        scored.sort(key=lambda pair: (-pair[0], pair[1]))
+        return [paper_id for _, paper_id in scored]
+
+    def _user_vector(self, user: EvalUser) -> list[float] | None:
+        vectors = [self._vectors[candidate.id] for candidate in user.history
+                   if candidate.id in self._vectors]
+        if not vectors:
+            return None
+
+        width = len(vectors[0])
+        mean = [sum(vector[index] for vector in vectors) / len(vectors) for index in range(width)]
+        return _normalize(mean)
+
+
+def _normalize(vector: list[float]) -> list[float]:
+    """把平均后的向量归一化 —— 平均几个单位向量得到的不再是单位向量。"""
+    length = sum(value * value for value in vector) ** 0.5
+    return [value / length for value in vector] if length else vector
 
 
 def score(candidate: Candidate, user: EvalUser) -> float:

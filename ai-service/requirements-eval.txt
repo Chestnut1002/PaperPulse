@@ -1,0 +1,7 @@
+# 离线评测(REQ-006)专用依赖。运行服务**不需要**它,所以单独一份。
+#
+#   pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements-eval.txt
+#
+# 装它会连带拉起 torch(数百 MB),加载模型又要下载约 2GB ——
+# 只跑随机 / 热门 / 我们的算法这三个方法时不需要装。
+sentence-transformers

@@ -8,6 +8,7 @@
 抓下来的原始数据会落一份本机缓存:构造一次要发不少请求,调指标时不该重抓。
 """
 
+import hashlib
 import json
 import random
 import time
@@ -26,6 +27,10 @@ _BATCH_SIZE = 50
 
 # 请求间隔(秒)。OpenAlex 对匿名调用有礼貌额度,别把它打疼
 _REQUEST_PAUSE = 0.3
+
+# 服务端抖动时的重试。**OpenAlex 实测会连续 504/500**,一次就放弃的话整个评测都跑不起来。
+_RETRIES = 4
+_RETRY_BACKOFF = 1.5
 
 # 种子论文的过滤条件。field 17 = Computer Science —— 评测放在项目关心的领域里才有意义。
 # 改动这里要同时改缓存键,否则会读到旧条件下的缓存。
@@ -67,12 +72,47 @@ def _headers() -> dict:
     return {"User-Agent": config.USER_AGENT}
 
 
+class QueryFailed(RuntimeError):
+    """OpenAlex 没能回答这个查询(超时 / 内部错误 / 限流)。
+
+    **这与"请求写错了"是两回事**:写错了重试一百次也没用,而这类错误拆小一点、
+    或者稍后再来通常就好了 —— 所以单独抛一个类型,让调用方有机会这么做。
+    """
+
+
 def _get(client: httpx.Client, params: dict) -> dict:
-    response = client.get(OPENALEX_API, params={**params, "mailto": "paperpulse@example.com"})
-    if response.status_code != 200:
-        raise RuntimeError(f"OpenAlex 返回 HTTP {response.status_code}:{response.text[:200]}")
-    time.sleep(_REQUEST_PAUSE)
-    return response.json()
+    """发一次请求。**服务端抖动就退避重试**,重试用尽才抛。
+
+    <p>实测 OpenAlex 会连续给出 504(查询太宽)、500(内部错误),
+    还有一次响应根本不含 `results` 字段 —— 都是它那边的问题,不是请求写错了。
+    """
+    last_error = ""
+    for attempt in range(_RETRIES):
+        try:
+            response = client.get(OPENALEX_API, params={**params, "mailto": "paperpulse@example.com"})
+        except httpx.HTTPError as exc:
+            last_error = f"连接失败:{exc}"
+        else:
+            if response.status_code == 200:
+                try:
+                    payload = response.json()
+                except ValueError as exc:
+                    last_error = f"响应不是合法 JSON:{exc}"
+                else:
+                    if "results" in payload:
+                        time.sleep(_REQUEST_PAUSE)
+                        return payload
+                    # 拿到 200 但没有 results —— 实测出现过,当作失败重试
+                    last_error = "响应缺少 results 字段"
+            else:
+                last_error = f"HTTP {response.status_code}"
+                # 4xx 是请求本身有问题,重试没有意义
+                if response.status_code < 500 and response.status_code != 429:
+                    raise RuntimeError(f"OpenAlex 返回 {last_error}:{response.text[:200]}")
+
+        time.sleep(_RETRY_BACKOFF * (attempt + 1))
+
+    raise QueryFailed(f"OpenAlex 重试 {_RETRIES} 次仍失败:{last_error}")
 
 
 def _to_candidate(work: dict) -> Candidate | None:
@@ -142,19 +182,34 @@ class OpenAlexSource:
         def fetch() -> dict[str, dict]:
             found: dict[str, dict] = {}
             for start in range(0, len(ids), _BATCH_SIZE):
-                batch = ids[start:start + _BATCH_SIZE]
-                short = [work_id.rsplit("/", 1)[-1] for work_id in batch]
-                page = _get(self.client, {
-                    "filter": "openalex_id:" + "|".join(short),
-                    "per-page": _BATCH_SIZE,
-                })
-                for work in page.get("results") or []:
-                    found[work["id"]] = work
+                found.update(self._fetch_batch(ids[start:start + _BATCH_SIZE], depth=0))
             return found
 
-        # 缓存键按 id 集合的内容定 —— 同一个集合重跑就不再发请求
-        digest = str(abs(hash(tuple(sorted(ids)))))
+        # 缓存键按 id 集合的**内容**定,而不是按顺序 —— 同一个集合重跑就不再发请求。
+        #
+        # 用 sha1 而不是内置 hash():**内置 hash() 对字符串每个进程都不同**(有随机盐),
+        # 拿它当缓存键的话,每次跑都是新键 —— 缓存永远命中不了,等于没有缓存。
+        digest = hashlib.sha1("\n".join(sorted(ids)).encode("utf-8")).hexdigest()[:16]
         return self._cached(f"works-{len(ids)}-{digest}", fetch)
+
+    def _fetch_batch(self, batch: list[str], depth: int) -> dict[str, dict]:
+        """取一批;**重试仍失败就拆成两半**。"""
+        short = [work_id.rsplit("/", 1)[-1] for work_id in batch]
+        try:
+            page = _get(self.client, {
+                "filter": "openalex_id:" + "|".join(short),
+                "per-page": max(_BATCH_SIZE, len(short)),
+            })
+        except QueryFailed:
+            if len(batch) == 1 or depth >= 5:
+                raise
+            middle = len(batch) // 2
+            return {
+                **self._fetch_batch(batch[:middle], depth + 1),
+                **self._fetch_batch(batch[middle:], depth + 1),
+            }
+
+        return {work["id"]: work for work in page.get("results") or []}
 
 
 def _interests_from(history: list[Candidate], max_keywords: int) -> tuple[tuple[str, int], ...]:
