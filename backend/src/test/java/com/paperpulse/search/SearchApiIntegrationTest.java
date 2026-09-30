@@ -1,6 +1,7 @@
 package com.paperpulse.search;
 
 import com.paperpulse.common.ApiException;
+import com.paperpulse.config.AiServiceConfig;
 import com.paperpulse.support.AbstractIntegrationTest;
 import com.paperpulse.support.ApiClient;
 import com.paperpulse.support.StubAiService;
@@ -88,7 +89,7 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     @DisplayName("检索结果落库,返回带本地 id 的论文")
     void searchPersistsPapers() {
-        AI_STUB.respondWith(200, TWO_PAPERS);
+        AI_STUB.search().respondWith(200, TWO_PAPERS);
         String token = registerAndLogin("searcher");
 
         ApiClient.Response response = search(token, Map.of("query", "找对比学习在推荐系统里的应用"));
@@ -109,7 +110,7 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     @DisplayName("把 Agent 的拆解结果一并返回,让'为什么这样搜'对用户可见")
     void returnsAgentPlan() {
-        AI_STUB.respondWith(200, TWO_PAPERS);
+        AI_STUB.search().respondWith(200, TWO_PAPERS);
         String token = registerAndLogin("searcher");
 
         ApiClient.Response response = search(token, Map.of("query", "找对比学习在推荐系统里的应用"));
@@ -121,7 +122,7 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     @DisplayName("检索到的论文可直接收藏 —— 客户端不必再提交任何元数据")
     void searchedPapersCanBeFavoritedDirectly() {
-        AI_STUB.respondWith(200, TWO_PAPERS);
+        AI_STUB.search().respondWith(200, TWO_PAPERS);
         String token = registerAndLogin("searcher");
 
         long paperId = search(token, Map.of("query", "对比学习"))
@@ -136,7 +137,7 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     @DisplayName("重复检索复用同一行,不会重复入库")
     void repeatedSearchIsIdempotent() {
-        AI_STUB.respondWith(200, TWO_PAPERS);
+        AI_STUB.search().respondWith(200, TWO_PAPERS);
         String token = registerAndLogin("searcher");
 
         long first = search(token, Map.of("query", "对比学习")).at("papers").get(0).get("id").asLong();
@@ -152,7 +153,7 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
         String token = registerAndLogin("searcher");
 
         // 第一次:S2 限流,降级到了 Crossref
-        AI_STUB.respondWith(200, """
+        AI_STUB.search().respondWith(200, """
                 {"query": "q", "plan": {"keywords": "k", "rationale": "r"}, "sourceLabel": "Crossref",
                  "papers": [{"source": "crossref", "externalId": "10.1000/abc", "doi": "10.1000/abc",
                              "title": "跨源论文", "authors": [], "citationCount": 0}]}
@@ -161,7 +162,7 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
                 .at("papers").get(0).get("id").asLong();
 
         // 第二次:S2 恢复了,同一篇论文这次来自 S2 —— 来源与外部 ID 都变了,但 DOI 没变
-        AI_STUB.respondWith(200, """
+        AI_STUB.search().respondWith(200, """
                 {"query": "q", "plan": {"keywords": "k", "rationale": "r"},
                  "sourceLabel": "Semantic Scholar",
                  "papers": [{"source": "semantic_scholar", "externalId": "S2-xyz", "doi": "10.1000/abc",
@@ -180,7 +181,7 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
         // 实测 S2 会返回两条外部 ID 不同、标题作者年份完全相同的记录。
         // 上游只能按身份和 DOI 去重,认不出它们是同一篇 —— 判定发生在落库时的跨源合并,
         // 所以结果列表必须在那之后再按本地 id 去重一次。
-        AI_STUB.respondWith(200, """
+        AI_STUB.search().respondWith(200, """
                 {"query": "q", "plan": {"keywords": "k", "rationale": "r"}, "sourceLabel": "S2",
                  "papers": [
                    {"source": "semantic_scholar", "externalId": "S2-aaa", "title": "同一篇论文",
@@ -201,7 +202,7 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     @DisplayName("元数据不全的条目被跳过,其余照常返回")
     void skipsIncompletePapers() {
-        AI_STUB.respondWith(200, """
+        AI_STUB.search().respondWith(200, """
                 {"query": "q", "plan": {"keywords": "k", "rationale": "r"}, "sourceLabel": "Crossref",
                  "papers": [
                    {"source": "crossref", "externalId": "", "title": "缺外部 ID"},
@@ -221,7 +222,7 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     @DisplayName("结果为空时正常返回空列表,而不是报错")
     void emptyResultIsNotAnError() {
-        AI_STUB.respondWith(200, EMPTY_RESULT);
+        AI_STUB.search().respondWith(200, EMPTY_RESULT);
         String token = registerAndLogin("searcher");
 
         ApiClient.Response response = search(token, Map.of("query", "一个搜不到东西的词"));
@@ -235,13 +236,13 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     @DisplayName("请求体带上查询与条数")
     void forwardsQueryAndLimit() {
-        AI_STUB.respondWith(200, EMPTY_RESULT);
+        AI_STUB.search().respondWith(200, EMPTY_RESULT);
         String token = registerAndLogin("searcher");
 
         search(token, Map.of("query", "扩散模型", "limit", 3));
 
-        assertThat(AI_STUB.receivedBodies()).hasSize(1);
-        assertThat(AI_STUB.receivedBodies().get(0))
+        assertThat(AI_STUB.search().receivedBodies()).hasSize(1);
+        assertThat(AI_STUB.search().receivedBodies().get(0))
                 .contains("\"query\":\"扩散模型\"")
                 .contains("\"limit\":3");
     }
@@ -249,12 +250,12 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     @DisplayName("不传 limit 时用默认条数")
     void usesDefaultLimitWhenAbsent() {
-        AI_STUB.respondWith(200, EMPTY_RESULT);
+        AI_STUB.search().respondWith(200, EMPTY_RESULT);
         String token = registerAndLogin("searcher");
 
         search(token, Map.of("query", "扩散模型"));
 
-        assertThat(AI_STUB.receivedBodies().get(0)).contains("\"limit\":5");
+        assertThat(AI_STUB.search().receivedBodies().get(0)).contains("\"limit\":5");
     }
 
     // ── 参数校验 ──────────────────────────────────────────────
@@ -285,7 +286,7 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     @DisplayName("未登录不能检索")
     void requiresAuthentication() {
-        AI_STUB.respondWith(200, EMPTY_RESULT);
+        AI_STUB.search().respondWith(200, EMPTY_RESULT);
 
         assertThat(api.postJson("/api/papers/search", json(Map.of("query", "扩散模型"))).status())
                 .isEqualTo(401);
@@ -300,7 +301,7 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
     @Test
     @DisplayName("ai-service 报错时返回 502,而不是 500")
     void mapsUpstreamErrorToBadGateway() {
-        AI_STUB.respondWith(502, "{\"detail\":\"查询拆解失败:大模型超时\"}");
+        AI_STUB.search().respondWith(502, "{\"detail\":\"查询拆解失败:大模型超时\"}");
         String token = registerAndLogin("searcher");
 
         ApiClient.Response response = search(token, Map.of("query", "扩散模型"));
@@ -316,7 +317,9 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
             unusedPort = socket.getLocalPort();   // 占一个端口再立刻关掉,得到一个确定没人监听的端口
         }
 
-        AiSearchClient client = new AiSearchClient("http://127.0.0.1:" + unusedPort);
+        // 用生产的 RestClient 配置构造,顺带把真实的超时设置也覆盖到
+        AiSearchClient client = new AiSearchClient(
+                new AiServiceConfig().aiServiceRestClient("http://127.0.0.1:" + unusedPort));
 
         assertThatThrownBy(() -> client.search("扩散模型", 5))
                 .isInstanceOf(ApiException.class)

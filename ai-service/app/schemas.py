@@ -56,3 +56,42 @@ class SearchResponse(BaseModel):
     plan: SearchPlan
     sourceLabel: str = Field(description="实际命中的数据源展示名(降级链走到哪就是谁)")
     papers: list[Paper]
+
+
+# ── 推荐候选(REQ-004) ─────────────────────────────────────
+
+
+class CandidateQuery(BaseModel):
+    """一路取候选的检索词。
+
+    `tag` 是调用方(Java 侧)的标签 key,原样带回去 —— 它不参与检索,
+    只用来告诉调用方"这篇是命中哪个兴趣捞上来的",供打分与生成推荐理由。
+    """
+
+    tag: str
+    keywords: str = Field(min_length=1, max_length=200)
+
+
+class CandidateRequest(BaseModel):
+    """按若干检索词批量取推荐候选。
+
+    <p>与 `/search` 的区别:**不做查询拆解,也不走大模型** ——
+    兴趣标签本身就带着检索词,没什么要拆的。少一次模型调用,少十秒等待。
+    """
+
+    queries: list[CandidateQuery] = Field(min_length=1, max_length=8)
+    perQuery: int = Field(default=8, ge=1, le=20, description="每路取多少条")
+
+
+class CandidatePaper(Paper):
+    """候选论文 = 普通论文 + 它命中了哪几路检索。
+
+    同一篇被多个兴趣命中时全部记下来 —— 调用方靠它决定"最相关的是哪个兴趣"。
+    """
+
+    matchedTags: list[str] = Field(default_factory=list)
+
+
+class CandidateResponse(BaseModel):
+    sourceLabel: str
+    papers: list[CandidatePaper]

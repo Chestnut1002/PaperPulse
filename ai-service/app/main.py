@@ -8,8 +8,8 @@ from fastapi import FastAPI, HTTPException
 
 from .agent import analyze
 from .llm import LlmError
-from .schemas import SearchRequest, SearchResponse
-from .sources import AllSourcesFailed, search_papers
+from .schemas import CandidateRequest, CandidateResponse, SearchRequest, SearchResponse
+from .sources import AllSourcesFailed, find_candidates, search_papers
 
 VERSION = "0.2.0"
 
@@ -51,3 +51,25 @@ def search(payload: SearchRequest) -> SearchResponse:
         sourceLabel=outcome.source_label,
         papers=outcome.papers,
     )
+
+
+@app.post("/recommend/candidates", response_model=CandidateResponse)
+def recommend_candidates(payload: CandidateRequest) -> CandidateResponse:
+    """按若干检索词批量取推荐候选(REQ-004)。
+
+    <p>**不调用大模型**:兴趣标签本身就带着检索词(见 Java 侧的 `InterestTag`),
+    没有"自然语言"需要拆解。少一次模型调用,少十秒等待。
+
+    <p>候选的排序与筛选不在这里 —— 这里只负责"把可能相关的论文捞回来",
+    打分要用到用户的行为数据,那是 Java 侧的事。
+    """
+    try:
+        labels, papers = find_candidates(
+            [(query.tag, query.keywords) for query in payload.queries],
+            per_query=payload.perQuery,
+        )
+    except AllSourcesFailed as exc:
+        # 503:上游都不可用,属于"暂时不可用",不是调用方的问题
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+    return CandidateResponse(sourceLabel="、".join(labels), papers=papers)

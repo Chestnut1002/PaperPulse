@@ -2,7 +2,13 @@
 
 import xml.etree.ElementTree as ET
 
+import pytest
+
+from app import sources
 from app.sources import (
+    AllSourcesFailed,
+    SearchOutcome,
+    _candidate_key,
     _clean_text,
     _in_year_range,
     _interleave,
@@ -164,6 +170,89 @@ class TestInterleave:
 
         assert labels == []
         assert merged == []
+
+
+class TestCandidateKey:
+    def test_有_DOI_时用_DOI(self):
+        # 同一篇从不同源、经由不同检索词捞上来时,DOI 是唯一认得出它的东西
+        a = _candidate_key({"source": "crossref", "externalId": "10.1/x", "doi": "10.1/x"})
+        b = _candidate_key({"source": "arxiv", "externalId": "2501.1", "doi": "10.1/x"})
+        assert a == b
+
+    def test_没有_DOI_时退回来源加外部_ID(self):
+        assert _candidate_key({"source": "arxiv", "externalId": "2501.1", "doi": None}) == (
+            "id:arxiv:2501.1"
+        )
+
+
+class TestFindCandidates:
+    """候选取回与合并。用 monkeypatch 换掉真正的检索,不联网。"""
+
+    def fake_search(self, monkeypatch, mapping):
+        """按关键词返回预设结果;映射里没有的关键词当作检索失败。"""
+
+        def search(keywords, limit, year_from, year_to):
+            if keywords not in mapping:
+                raise RuntimeError(f"{keywords} 失败")
+            label, papers = mapping[keywords]
+            return SearchOutcome(label, papers)
+
+        monkeypatch.setattr(sources, "search_papers", search)
+
+    def test_同一篇被多路命中时累积标签(self, monkeypatch):
+        shared = {"source": "crossref", "externalId": "10.1/x", "title": "共同的一篇", "doi": "10.1/x"}
+        self.fake_search(monkeypatch, {
+            "a": ("Crossref", [dict(shared)]),
+            "b": ("Crossref", [dict(shared)]),
+        })
+
+        labels, papers = sources.find_candidates([("t1", "a"), ("t2", "b")], per_query=5)
+
+        assert len(papers) == 1
+        assert papers[0]["matchedTags"] == ["t1", "t2"]
+        assert labels == ["Crossref"]
+
+    def test_某一路失败不影响其余(self, monkeypatch):
+        self.fake_search(monkeypatch, {
+            "a": ("Crossref", [{"source": "crossref", "externalId": "10.1/x",
+                                "title": "甲", "doi": "10.1/x"}]),
+            # "b" 不在映射里 → 抛异常
+        })
+
+        labels, papers = sources.find_candidates([("t1", "a"), ("t2", "b")], per_query=5)
+
+        assert [p["title"] for p in papers] == ["甲"]
+        assert labels == ["Crossref"]
+
+    def test_每一路都失败时抛出而不是当作没有候选(self, monkeypatch):
+        # "上游不可用"和"没有候选"要分得开 —— 前者该返回 503,后者是正常结果
+        self.fake_search(monkeypatch, {})
+
+        with pytest.raises(AllSourcesFailed):
+            sources.find_candidates([("t1", "a")], per_query=5)
+
+    def test_候选为空但没报错时正常返回(self, monkeypatch):
+        self.fake_search(monkeypatch, {"a": ("Crossref", [])})
+
+        labels, papers = sources.find_candidates([("t1", "a")], per_query=5)
+
+        assert papers == []
+        assert labels == ["Crossref"]
+
+    def test_多源标签按出现顺序去重(self, monkeypatch):
+        self.fake_search(monkeypatch, {
+            "a": ("Semantic Scholar、arXiv", [{"source": "arxiv", "externalId": "1",
+                                               "title": "甲", "doi": None}]),
+            "b": ("arXiv、Crossref", [{"source": "crossref", "externalId": "2",
+                                       "title": "乙", "doi": None}]),
+        })
+
+        labels, _ = sources.find_candidates([("t1", "a"), ("t2", "b")], per_query=5)
+
+        assert labels == ["Semantic Scholar", "arXiv", "Crossref"]
+
+    def test_空查询列表(self):
+        assert sources.find_candidates([], per_query=5) == ([], [])
 
 
 class TestCleanText:

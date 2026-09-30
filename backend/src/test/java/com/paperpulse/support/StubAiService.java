@@ -1,5 +1,6 @@
 package com.paperpulse.support;
 
+import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpServer;
 
 import java.io.IOException;
@@ -13,21 +14,45 @@ import java.util.concurrent.Executors;
 /**
  * 假的 ai-service:用 JDK 自带的 {@link HttpServer} 起一个**真的** HTTP 服务。
  *
- * <p><b>为什么不把 {@code AiSearchClient} mock 掉:</b>那样会绕过 JSON 反序列化、状态码映射、
+ * <p><b>为什么不把客户端 mock 掉:</b>那样会绕过 JSON 反序列化、状态码映射、
  * 请求体形状、超时配置 —— 而这几处恰恰是最容易出错的地方。用一个真的 HTTP 服务,
  * 被测代码走的是完整的真实路径,只有"对面是谁"被换掉了。
  *
  * <p>不引 WireMock 之类的库:JDK 自带就够,少一个依赖。
+ *
+ * <p>每个接口可以**分别**设定响应:检索与推荐是两条独立的链路,测试时也应当能各自出故障。
  */
 public class StubAiService {
 
     private final HttpServer server;
 
-    /** 收到的请求体,按到达顺序。用来断言"我们确实把查询和条数发出去了"。 */
-    private final List<String> receivedBodies = new CopyOnWriteArrayList<>();
+    private final Endpoint search = new Endpoint();
+    private final Endpoint candidates = new Endpoint();
 
-    private volatile int responseStatus = 200;
-    private volatile String responseBody = "{}";
+    /** 一个接口的可配置响应与收到的请求体。 */
+    public static final class Endpoint {
+        private volatile int status = 200;
+        private volatile String body = "{}";
+        private final List<String> receivedBodies = new CopyOnWriteArrayList<>();
+
+        public void respondWith(int status, String body) {
+            this.status = status;
+            this.body = body;
+        }
+
+        public List<String> receivedBodies() {
+            return List.copyOf(receivedBodies);
+        }
+
+        void record(String body) {
+            receivedBodies.add(body);
+        }
+
+        void reset() {
+            receivedBodies.clear();
+            respondWith(200, "{}");
+        }
+    }
 
     public StubAiService() {
         try {
@@ -38,24 +63,26 @@ public class StubAiService {
         }
 
         // 用守护线程:非守护线程会让 JVM 在测试跑完后不退出,表现为构建挂住
-        server.setExecutor(Executors.newFixedThreadPool(2, runnable -> {
+        server.setExecutor(Executors.newFixedThreadPool(4, runnable -> {
             Thread thread = new Thread(runnable, "stub-ai-service");
             thread.setDaemon(true);
             return thread;
         }));
 
-        server.createContext("/search", exchange -> {
-            receivedBodies.add(new String(exchange.getRequestBody().readAllBytes(),
-                    StandardCharsets.UTF_8));
-
-            byte[] payload = responseBody.getBytes(StandardCharsets.UTF_8);
-            exchange.getResponseHeaders().add("Content-Type", "application/json; charset=utf-8");
-            exchange.sendResponseHeaders(responseStatus, payload.length);
-            exchange.getResponseBody().write(payload);
-            exchange.close();
-        });
+        server.createContext("/search", exchange -> handle(exchange, search));
+        server.createContext("/recommend/candidates", exchange -> handle(exchange, candidates));
 
         server.start();
+    }
+
+    private static void handle(HttpExchange exchange, Endpoint endpoint) throws IOException {
+        endpoint.record(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8));
+
+        byte[] payload = endpoint.body.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().add("Content-Type", "application/json; charset=utf-8");
+        exchange.sendResponseHeaders(endpoint.status, payload.length);
+        exchange.getResponseBody().write(payload);
+        exchange.close();
     }
 
     public int getPort() {
@@ -66,18 +93,18 @@ public class StubAiService {
         return "http://127.0.0.1:" + getPort();
     }
 
-    /** 下一次请求返回什么。用例通过它来模拟正常响应与各种错误。 */
-    public void respondWith(int status, String body) {
-        this.responseStatus = status;
-        this.responseBody = body;
+    /** 检索接口:{@code POST /search} */
+    public Endpoint search() {
+        return search;
     }
 
-    public List<String> receivedBodies() {
-        return List.copyOf(receivedBodies);
+    /** 推荐候选接口:{@code POST /recommend/candidates} */
+    public Endpoint candidates() {
+        return candidates;
     }
 
     public void reset() {
-        receivedBodies.clear();
-        respondWith(200, "{}");
+        search.reset();
+        candidates.reset();
     }
 }

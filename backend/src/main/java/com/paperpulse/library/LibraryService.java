@@ -7,12 +7,15 @@ import com.paperpulse.library.dto.RatingResponse;
 import com.paperpulse.paper.Paper;
 import com.paperpulse.paper.PaperService;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 收藏 / 阅读历史 / 评分(F6)。
@@ -45,6 +48,27 @@ public class LibraryService {
     private final PaperReadHistoryRepository history;
     private final PaperRatingRepository ratings;
     private final PaperService paperService;
+
+    /**
+     * 用户已经打过交道的论文 id(收藏 / 读过 / 评过分)。
+     *
+     * <p>推荐用它排除已知的论文 —— 推荐的意义是"给你没看过的",
+     * 把用户自己收藏过的东西再推一遍没有任何价值。
+     *
+     * <p>三种行为取并集:只要碰过其中一种就算已知。**读过也算**,
+     * 哪怕没收藏 —— 用户已经看过它了。
+     */
+    @Transactional(readOnly = true)
+    public Set<Long> knownPaperIds(Long userId) {
+        Set<Long> known = new HashSet<>();
+        favorites.findByUserIdOrderByFavoritedAtDesc(userId)
+                .forEach(row -> known.add(row.getPaperId()));
+        ratings.findByUserIdOrderByRatedAtDesc(userId)
+                .forEach(row -> known.add(row.getPaperId()));
+        history.findByUserIdOrderByLastReadAtDesc(userId, Pageable.unpaged())
+                .forEach(row -> known.add(row.getPaperId()));
+        return known;
+    }
 
     public LibraryService(PaperFavoriteRepository favorites,
                           PaperReadHistoryRepository history,

@@ -438,3 +438,68 @@ def search_papers(keywords: str, limit: int = config.DEFAULT_LIMIT,
 
     labels, papers = _interleave(outcomes, limit)
     return SearchOutcome("、".join(labels), papers)
+
+
+def _candidate_key(paper: dict) -> str:
+    """候选的身份键。
+
+    有 DOI 用 DOI —— 同一篇论文从不同源、经由不同检索词捞上来时,DOI 是唯一认得出它的东西。
+    没有 DOI 就退回 `(来源, 外部 ID)`。
+    """
+    doi = paper.get("doi")
+    return f"doi:{doi}" if doi else f"id:{paper['source']}:{paper['externalId']}"
+
+
+def find_candidates(queries: list[tuple[str, str]],
+                    per_query: int) -> tuple[list[str], list[dict]]:
+    """按若干 `(标签, 检索词)` 取推荐候选,再按论文合并。
+
+    <p>与 {@link search_papers} 的区别:这里没有"用户的自然语言",只有既定的检索词,
+    所以不需要也不该走大模型拆解。
+
+    <p>同一篇被多路检索命中时把标签**累积**起来 —— 调用方靠它判断"最相关的是哪个兴趣",
+    以及据此生成推荐理由。
+
+    <p>各路**并发**发起;某一路失败不影响其余 —— 少一路候选,总好过整页推荐打不开。
+    """
+    if not queries:
+        return [], []
+
+    with ThreadPoolExecutor(max_workers=len(queries)) as pool:
+        futures = [(tag, pool.submit(search_papers, keywords, per_query, None, None))
+                   for tag, keywords in queries]
+
+        merged: dict[str, dict] = {}
+        order: list[str] = []
+        labels: list[str] = []
+        succeeded = 0
+
+        for tag, future in futures:
+            try:
+                outcome = future.result()
+            except RuntimeError:
+                continue
+
+            succeeded += 1
+            for label in outcome.source_label.split("、"):
+                if label and label not in labels:
+                    labels.append(label)
+
+            for paper in outcome.papers:
+                key = _candidate_key(paper)
+                existing = merged.get(key)
+                if existing is not None:
+                    if tag not in existing["matchedTags"]:
+                        existing["matchedTags"].append(tag)
+                    continue
+
+                entry = dict(paper)
+                entry["matchedTags"] = [tag]
+                merged[key] = entry
+                order.append(key)
+
+    if succeeded == 0:
+        # 每一路都失败了 —— 那是上游不可用,不是"没有候选",两者要分得开
+        raise AllSourcesFailed("所有检索路都失败了,无法生成候选")
+
+    return labels, [merged[key] for key in order]
