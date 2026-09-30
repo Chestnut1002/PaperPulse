@@ -9,18 +9,20 @@
 | 需求 | 内容 | 状态 |
 | ---- | ---- | ---- |
 | REQ-001 | 用户注册/登录(JWT),兴趣标签、收藏、阅读历史、论文评分 | ✅ 已完成 |
-| REQ-002 | 检索 Agent:自然语言 → 论文检索,返回带来源文献列表 | ⏳ 待开始 |
-| REQ-003 | 论文精读问答:锚点+动态截断 / RAG,回答带引用 | ⏳ 待开始 |
-| REQ-004 | 个性化论文推荐:行为反馈闭环 + 探索位 | ⏳ 待开始 |
-| REQ-005 | 可解释推荐理由(每条推荐附"为什么推荐") | ⏳ 待开始 |
-| REQ-006 | 离线评测:Recall@K、NDCG@K 对比实验 | ⏳ 待开始 |
+| REQ-002 | 检索 Agent:自然语言 → 论文检索,返回带来源文献列表 | 🔨 S1–S6 完成,S7 待做 |
+| REQ-003 | 论文精读问答:锚点+动态截断 / RAG,回答带引用 | 🔨 P1 / P1b / P3 完成,P2 / P4 待做 |
+| REQ-004 | 个性化论文推荐:行为反馈闭环 + 探索位 | 🔨 R1–R3 完成,R4 待做 |
+| REQ-005 | 可解释推荐理由(每条推荐附"为什么推荐") | 🔨 最简版已随推荐接口交付,尚未独立拆分 |
+| REQ-006 | 离线评测:Recall@K、NDCG@K 对比实验 | 🔨 E1 / E2 完成,E3 / E4 待做 |
 
 详细进度与拆分见 [`docs/requirements.md`](docs/requirements.md);每日开发记录见 [`docs/dev-log.md`](docs/dev-log.md)。
 
 ## 结构
 
-- `backend/` — Java Spring Boot 用户系统(注册登录 JWT、收藏、行为记录)
-- `ai-service/` — Python FastAPI(检索 Agent、精读问答、个性化推荐、可解释理由)
+- `backend/` — Java Spring Boot 主服务:用户与鉴权(JWT)、兴趣标签、论文图书馆、
+  以及检索 / 精读问答 / 推荐的路由与落库
+- `ai-service/` — Python FastAPI:检索 Agent、精读问答、推荐候选与理由生成。
+  它**只被 backend 调用**,不直接对外
 - `frontend/` — Vue 3 + Vite 前端
 - `docs/` — 开发规范、开发日志、需求管理、架构设计
 - `experiments/` — AI 实验记录
@@ -68,10 +70,19 @@ git config core.hooksPath .githooks
 
 ### 4. AI 服务
 
+这一端**只被 backend 调用**,不直接对外。缺 `DEEPSEEK_API_KEY` 时,检索与精读问答会失败。
+
 ```bash
 cd ai-service
+py -m venv .venv                                          # 仅第一次;python 命令不可用时用 py 启动器
+.venv/Scripts/python -m pip install -r requirements.txt   # Windows;其他平台是 .venv/bin/python
+cp .env.example .env                                      # 然后填上 DEEPSEEK_API_KEY
+
 .venv/Scripts/python -m uvicorn app.main:app --port 8000
 ```
+
+跑测试另需 `requirements-dev.txt`;离线评测(REQ-006)是单独的 `requirements-eval.txt` ——
+它会连带拉起 torch(数百 MB),不做评测就别装。
 
 ### 5. 前端
 
@@ -123,6 +134,7 @@ npm install && npm run dev
 | 方法 | 路径 | 说明 |
 | ---- | ---- | ---- |
 | POST | `/api/papers` | 提交论文元数据,**幂等 upsert**,返回本地 id |
+| GET | `/api/papers/{paperId}` | 按本地 id 取一篇论文(精读页刷新用) |
 | GET | `/api/users/me/favorites` | 收藏列表,最近收藏的在前 |
 | POST | `/api/users/me/favorites/{paperId}` | 收藏(幂等,重复调用不报错) |
 | DELETE | `/api/users/me/favorites/{paperId}` | 取消收藏,没收藏过返回 404 |
@@ -132,6 +144,25 @@ npm install && npm run dev
 | GET | `/api/users/me/ratings` | 评分列表 |
 | PUT | `/api/users/me/ratings/{paperId}` | 打分 / 改分,1–5 星 |
 | DELETE | `/api/users/me/ratings/{paperId}` | 取消评分,没评过返回 404 |
+
+### 检索、精读问答与推荐
+
+这三个功能走 `backend → ai-service` 两跳:backend 管鉴权与落库,ai-service 管调模型、抓数据源。
+
+| 方法 | 路径 | 说明 |
+| ---- | ---- | ---- |
+| POST | `/api/papers/search` | 自然语言检索。返回 Agent 拆解出的检索词与理由,命中结果由后端落库 |
+| POST | `/api/papers/{paperId}/qa` | 单篇论文精读问答,回答带引用(节号 + 原文摘录) |
+| POST | `/api/papers/{paperId}/arxiv-lookup` | 拿标题去 arXiv 反查编号,查到就写进库里(所有用户受益) |
+| POST | `/api/papers/from-arxiv` | 粘贴 arXiv 编号或链接,直接打开这篇 |
+| GET | `/api/users/me/recommendations` | 按兴趣标签推荐,每条附推荐理由 |
+
+> **这几个接口依赖 ai-service 在跑。** 连不上返回 **503**,上游出错返回 **502** —— 都不是 500:
+> 前者重试可能就好了,后者是对方的问题,两者的处理方式不该一样。
+>
+> ai-service 自身暴露 `GET /health`、`POST /search`、`POST /recommend/candidates`、
+> `POST /lookup/arxiv`、`POST /lookup/arxiv-by-title`、`POST /qa`,**只被 backend 调用**,
+> 不对外,也不需要鉴权。
 
 错误响应统一为 `{ timestamp, status, error, message }`,参数校验失败时额外带 `fieldErrors`。
 未认证返回 401,格式与上同 —— 前端只需一套解析逻辑。
@@ -183,10 +214,15 @@ mvn test
 ```
 
 集成测试会启动**真实的 Spring 容器 + 真实 Tomcat**(随机端口),用真实 HTTP 请求打过去,
-并连接真实 MySQL —— 不用 mock。这样才能真正验证 BCrypt、JWT 签名和 Spring Security 过滤器链的行为。
+并连接真实 MySQL。这样才能真正验证 BCrypt、JWT 签名和 Spring Security 过滤器链的行为。
+
+**唯一的替身是 ai-service**:检索 / 推荐 / 精读 / 反查这几个测试类用 `StubAiService`
+(JDK 自带的 `HttpServer` 起一个假上游)顶掉 Python 侧。也就是说,它们验证的是
+**后端在真实 HTTP 往返下的行为**,不验证检索质量 —— 那是 ai-service 自己的 146 条测试的事。
 
 数据库口令与运行应用时是同一套:本机放在 `backend/src/main/resources/application-local.yml`,
-其他环境用 `DB_PASSWORD` 环境变量。
+其他环境用 `DB_PASSWORD` 环境变量。**`JWT_SECRET` 同样必需**(`JwtProperties` 构造期校验,
+未配置即拒绝启动),测试上下文不另外提供它 —— 来源与跑应用时一致。
 
 测试连的是**独立数据库 `paperpulse_test`**,不会碰开发库 `paperpulse`。
 该库首次运行自动创建,表结构由 `ddl-auto: create-drop` 管理,跑完即删。
@@ -194,15 +230,28 @@ mvn test
 > `TestDatabaseGuard` 会在容器启动**之前**核对库名,连错库直接中止构建。
 > 时机很关键:`create-drop` 在容器启动时就会删表重建,等到测试方法里再检查,开发库的表已经没了。
 
-| 测试类 | 覆盖 |
-| ---- | ---- |
-| `AuthApiIntegrationTest` | 登录签发 JWT:签名可独立复算、载荷正确、防用户名枚举、计时侧信道 |
-| `AuthorizationApiIntegrationTest` | 受保护接口鉴权:无 token / 签名被篡改 / 已过期 / 用户不存在 |
-| `ErrorHandlingIntegrationTest` | 客户端错误分类:404 / 400 / 405 / 415 不再一律报 500 |
-| `InterestApiIntegrationTest` | 兴趣标签:全量替换语义、改权重时的写入次序、校验先于删数据 |
-| `LibraryApiIntegrationTest` | 论文落库与三类行为:幂等边界、计数而非追加、元数据不被空值擦除、**并发首次提交的冲突恢复** |
+| 测试类 | 条数 | 覆盖 |
+| ---- | ---- | ---- |
+| `AuthApiIntegrationTest` | 10 | 登录签发 JWT:签名可独立复算、载荷正确、防用户名枚举、计时侧信道 |
+| `AuthorizationApiIntegrationTest` | 9 | 受保护接口鉴权:无 token / 签名被篡改 / 已过期 / 用户不存在 |
+| `ErrorHandlingIntegrationTest` | 6 | 客户端错误分类:404 / 400 / 405 / 415 不再一律报 500 |
+| `InterestApiIntegrationTest` | 16 | 兴趣标签:全量替换语义、改权重时的写入次序、校验先于删数据 |
+| `LibraryApiIntegrationTest` | 25 | 论文落库与三类行为:幂等边界、计数而非追加、元数据不被空值擦除、**并发首次提交的冲突恢复** |
+| `PaperMatcherTest` | 33 | 跨源合并规则(纯逻辑,不起 Spring) |
+| `PaperMergeApiIntegrationTest` | 11 | 跨源合并:同一篇论文因命中不同数据源而在库里存成两行 |
+| `DoiApiIntegrationTest` | 8 | 论文的跨源身份(DOI) |
+| `ArxivReferenceTest` | 12 | 从用户粘贴的内容里抽 arXiv 编号(纯逻辑) |
+| `OpenByArxivApiIntegrationTest` | 9 | 粘贴 arXiv 编号 / 链接直接打开论文 |
+| `SearchApiIntegrationTest` | 17 | 自然语言检索接口(REQ-002) |
+| `ReadingApiIntegrationTest` | 10 | 精读问答(REQ-003) |
+| `ResolveArxivApiIntegrationTest` | 14 | 按标题反查 arXiv 预印本(REQ-003 P3) |
+| `RecommendationApiIntegrationTest` | 13 | 个性化推荐(REQ-004) |
+| `JwtPropertiesTest` | 5 | JWT 配置的启动期校验(纯逻辑,不起 Spring) |
+| `BackendApplicationTests` | 1 | Spring 上下文能起来 |
 
-当前共 66 条用例。其中 F6-25 专门盯并发:`CyclicBarrier` 对齐八个线程同时提交同一篇新论文,
+**后端 199 条**,全绿。另两端:ai-service 146 条(pytest)、前端 113 条(vitest)。
+
+`LibraryApiIntegrationTest` 里有一条专门盯并发:`CyclicBarrier` 对齐八个线程同时提交同一篇新论文,
 断言它们全部成功且收敛到同一个 id —— 这条用例是删不掉的,删掉并发恢复代码它就红。
 
 ## 开发提示
