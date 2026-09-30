@@ -3,6 +3,8 @@ package com.paperpulse.paper;
 import com.paperpulse.paper.dto.PaperInput;
 import com.paperpulse.paper.dto.PaperResponse;
 import jakarta.validation.Valid;
+import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
@@ -34,5 +36,15 @@ public class PaperController {
     @PostMapping("/api/papers")
     public PaperResponse upsert(@Valid @RequestBody PaperInput input) {
         return PaperResponse.of(paperService.resolve(input));
+    }
+
+    /**
+     * 按本地 id 取一篇论文。
+     *
+     * <p>精读页面用它 —— 论文信息不能只靠前端路由带过去,**刷新一次就没了**。
+     */
+    @GetMapping("/api/papers/{paperId}")
+    public PaperResponse byId(@PathVariable Long paperId) {
+        return PaperResponse.of(paperService.require(paperId));
     }
 }

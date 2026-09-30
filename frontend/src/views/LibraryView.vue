@@ -188,6 +188,13 @@ onMounted(load)
             </p>
           </div>
           <div class="paper-row__actions">
+            <router-link
+              v-if="item.paper.arxivId"
+              class="link"
+              :to="{ name: 'reading', params: { paperId: item.paper.id } }"
+            >
+              精读
+            </router-link>
             <el-rate
               :model-value="scoreOf(item.paper.id)"
               :disabled="busy.has(item.paper.id)"

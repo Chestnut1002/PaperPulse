@@ -175,6 +175,7 @@ public class RecommendationService {
                 candidate.source(),
                 candidate.externalId(),
                 candidate.doi(),
+                candidate.arxivId(),
                 candidate.title(),
                 candidate.authors(),
                 candidate.abstractText(),

@@ -132,6 +132,13 @@ onMounted(load)
             </div>
 
             <div class="paper-row__actions">
+              <router-link
+                v-if="item.paper.arxivId"
+                class="link"
+                :to="{ name: 'reading', params: { paperId: item.paper.id } }"
+              >
+                精读
+              </router-link>
               <el-button
                 size="small"
                 :type="favoriteIds.has(item.paper.id) ? 'default' : 'primary'"

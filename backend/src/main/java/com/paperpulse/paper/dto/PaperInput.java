@@ -42,6 +42,11 @@ public record PaperInput(
         @Size(max = 128, message = "DOI 过长")
         String doi,
 
+        // arXiv 编号。**它决定这篇能不能精读** —— 全文是从 arXiv 抓的。
+        // S2 的记录里带;Crossref 那边看 DOI 是不是 arXiv 的
+        @Size(max = 64, message = "arXiv 编号过长")
+        String arxivId,
+
         @NotBlank(message = "论文标题不能为空")
         @Size(max = 512, message = "标题过长")
         String title,

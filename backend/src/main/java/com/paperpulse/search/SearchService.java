@@ -125,6 +125,7 @@ public class SearchService {
                 paper.source(),
                 paper.externalId(),
                 paper.doi(),
+                paper.arxivId(),
                 paper.title(),
                 paper.authors(),
                 paper.abstractText(),

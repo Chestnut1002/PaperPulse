@@ -74,6 +74,15 @@ public class Paper {
     @Column(name = "doi", length = 128)
     private String doi;
 
+    /**
+     * arXiv 编号。**它决定这篇论文能不能精读** —— 全文是从 arXiv 的 HTML 版抓的。
+     *
+     * <p>可空:期刊论文没有。Semantic Scholar 索引进 arXiv 的记录会带这个编号,
+     * Crossref 那边则要看 DOI 是不是 arXiv 的({@code 10.48550/arxiv.*})。
+     */
+    @Column(name = "arxiv_id", length = 64)
+    private String arxivId;
+
     @Column(nullable = false, length = 512)
     private String title;
 
@@ -124,6 +133,7 @@ public class Paper {
         this.source = source;
         this.externalId = input.externalId();
         this.doi = Doi.normalize(input.doi());
+        this.arxivId = normalizeArxivId(input.arxivId());
         this.metadataUpdatedAt = now;
         // 构造函数里直接赋值,不走 applyMetadata —— 新建的行没有"已有数据"需要保护。
         this.title = input.title();
@@ -150,6 +160,7 @@ public class Paper {
         // DOI 也在这里补齐:先入库的那次可能没带 DOI(比如降级到某个字段更少的源),
         // 后来拿到了就补上。**这不会覆盖已有的 DOI** —— 同一篇论文的 DOI 只会有一个。
         changed |= replaceIfPresent(doi, Doi.normalize(input.doi()), value -> doi = value);
+        changed |= replaceIfPresent(arxivId, normalizeArxivId(input.arxivId()), value -> arxivId = value);
 
         // 标题与 title_key 必须一起改
         changed |= replaceIfPresent(title, input.title(), value -> {
@@ -188,6 +199,7 @@ public class Paper {
         boolean changed = false;
 
         changed |= fillIfAbsent(doi, Doi.normalize(input.doi()), value -> doi = value);
+        changed |= fillIfAbsent(arxivId, normalizeArxivId(input.arxivId()), value -> arxivId = value);
         changed |= fillIfAbsent(title, input.title(), value -> {
             title = value;
             titleKey = PaperMatcher.titleKey(value);
@@ -206,6 +218,19 @@ public class Paper {
             this.metadataUpdatedAt = now;
         }
         return changed;
+    }
+
+    /**
+     * arXiv 编号的规范化:去掉版本后缀。
+     *
+     * <p>{@code 2502.19271v2} 与 {@code 2502.19271} 是**同一篇的不同修订**,
+     * 带着版本号存会让同一个编号认不出来 —— 而它是"这篇能不能精读"的判据。
+     */
+    private static String normalizeArxivId(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return null;
+        }
+        return raw.trim().replaceFirst("v\\d+$", "");
     }
 
     /** 当前值为空、且新值非空时才写入。返回是否写入。 */
@@ -251,6 +276,10 @@ public class Paper {
 
     public String getDoi() {
         return doi;
+    }
+
+    public String getArxivId() {
+        return arxivId;
     }
 
     public String getTitle() {

@@ -6,10 +6,28 @@
 
 from fastapi import FastAPI, HTTPException
 
+from . import config
+
 from .agent import analyze
 from .llm import LlmError
-from .schemas import CandidateRequest, CandidateResponse, SearchRequest, SearchResponse
+from .reading.fulltext import FullTextStore, FullTextUnavailable
+from .reading.qa import ContextTooLong, ask
+from .schemas import (
+    CandidateRequest,
+    CandidateResponse,
+    Citation,
+    QaRequest,
+    QaResponse,
+    SearchRequest,
+    SearchResponse,
+)
 from .sources import AllSourcesFailed, find_candidates, search_papers
+
+# 全文缓存在服务启动时建一次,进程内复用
+_full_text_store = FullTextStore(config.FULLTEXT_CACHE_DIR)
+
+# 一条依据里摘多少字符。够看清"取自哪一段",又不至于把整节塞进响应
+_EXCERPT_CHARS = 320
 
 VERSION = "0.2.0"
 
@@ -73,3 +91,51 @@ def recommend_candidates(payload: CandidateRequest) -> CandidateResponse:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return CandidateResponse(sourceLabel="、".join(labels), papers=papers)
+
+
+@app.post("/qa", response_model=QaResponse)
+def qa(payload: QaRequest) -> QaResponse:
+    """就一篇 arXiv 论文回答问题(REQ-003)。
+
+    <p><b>全文常驻上下文,不走 RAG。</b>一篇论文去掉参考文献后约 2 万 token,装得下;
+    跨论文检索才需要 RAG。
+
+    <p>对话历史由调用方带上 —— 这个服务不维持会话状态,重启不丢对话。
+
+    <p><b>引用是构造出来的,不是模型抄的</b>:模型只负责"回指哪一节",
+    摘录由这里从原文直接取。让它抄原文,它就会编原文。
+    """
+    try:
+        full_text = _full_text_store.get(payload.arxivId)
+    except FullTextUnavailable as exc:
+        # 404:这篇论文没有可精读的全文 —— 是"没有这个东西",不是"服务器坏了"
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+    try:
+        result = ask(full_text, payload.question,
+                     [(turn.role, turn.content) for turn in payload.history])
+    except ContextTooLong as exc:
+        # 422:请求本身没问题,是这篇论文超出了能处理的长度
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except LlmError as exc:
+        raise HTTPException(status_code=502, detail=f"回答失败:{exc}") from exc
+
+    return QaResponse(
+        answer=result.answer,
+        citations=_citations(full_text, result.cited_indexes),
+        omittedTurns=result.omitted_turns,
+    )
+
+
+def _citations(full_text, indexes) -> list[Citation]:
+    """按模型回指的节号,从原文取依据片段。**取不到的节号直接跳过,不猜。**"""
+    citations = []
+    for index in indexes:
+        section = full_text.find(index)
+        if section is None:
+            continue
+        excerpt = section.text[:_EXCERPT_CHARS]
+        if len(section.text) > _EXCERPT_CHARS:
+            excerpt += "…"
+        citations.append(Citation(index=index, title=section.title, excerpt=excerpt))
+    return citations

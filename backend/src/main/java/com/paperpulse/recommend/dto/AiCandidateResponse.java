@@ -18,6 +18,7 @@ public record AiCandidateResponse(String sourceLabel, List<Candidate> papers) {
             String source,
             String externalId,
             String doi,
+            String arxivId,
             String title,
             List<String> authors,
             String abstractText,

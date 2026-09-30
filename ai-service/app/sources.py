@@ -202,6 +202,8 @@ def semantic_scholar_to_paper(item: dict) -> dict | None:
         "url": _non_empty(item.get("url")),
         # S2 把 DOI 放在 externalIds 里,不在顶层
         "doi": normalize_doi((item.get("externalIds") or {}).get("DOI")),
+        # S2 索引了 arXiv,所以不少记录带 arXiv 编号 —— 有它这篇就能精读
+        "arxivId": _non_empty((item.get("externalIds") or {}).get("ArXiv")),
         "citationCount": item.get("citationCount") or 0,
     }
 
@@ -230,8 +232,22 @@ def crossref_to_paper(item: dict) -> dict | None:
         "venue": _clean_text(_non_empty(item.get("container-title"))),
         "url": _non_empty(item.get("URL")),
         "doi": doi,
+        # arXiv 预印本在 Crossref 里的 DOI 就是 10.48550/arxiv.XXXX —— 从它反推编号,
+        # 这样一部分 Crossref 论文也能精读
+        "arxivId": _arxiv_from_doi(doi),
         "citationCount": item.get("is-referenced-by-count") or 0,
     }
+
+
+# arXiv 的 DOI 前缀。Crossref 里预印本的 DOI 长这样,正式发表版则是期刊的 DOI。
+_ARXIV_DOI_PREFIX = "10.48550/arxiv."
+
+
+def _arxiv_from_doi(doi: str | None) -> str | None:
+    """从 arXiv 的 DOI 反推编号;不是 arXiv 的 DOI 就返回 None。"""
+    if doi and doi.startswith(_ARXIV_DOI_PREFIX):
+        return doi[len(_ARXIV_DOI_PREFIX):] or None
+    return None
 
 
 def _collect(mapped: list[dict | None], year_from: int | None, year_to: int | None) -> list[dict]:
@@ -321,6 +337,8 @@ def arxiv_to_paper(entry: ET.Element) -> dict | None:
         "venue": _clean_text(entry.findtext(f"{ARXIV_NS}journal_ref")),
         # 作者自愿登记的正式发表 DOI,实测只有约一成的论文有 —— 有就用,没有就算了
         "doi": normalize_doi(entry.findtext(f"{ARXIV_NS}doi")),
+        # 它自己就是 arXiv 来源,编号必然有 —— 这篇一定能精读
+        "arxivId": arxiv_id,
         "url": raw_id,
         "citationCount": 0,
     }

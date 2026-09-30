@@ -32,6 +32,8 @@ public record AiSearchResponse(String query, Plan plan, String sourceLabel, List
             String externalId,
             /** DOI,跨源身份;来源可能不给,所以可空 */
             String doi,
+            /** arXiv 编号;有它这篇才能精读 */
+            String arxivId,
             String title,
             List<String> authors,
             String abstractText,

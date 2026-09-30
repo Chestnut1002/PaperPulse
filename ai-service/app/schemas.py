@@ -44,6 +44,9 @@ class Paper(BaseModel):
     # DOI:同一篇论文在不同来源下的 DOI 相同,而后端是按 (来源, 外部 ID) 去重的,
     # 所以只靠那对键会把同一篇论文在两个源里各存一行。带上 DOI,后端才能跨源认出它。
     doi: str | None = None
+    # arXiv 编号 —— 有它才谈得上精读(全文是从 arXiv 抓的)。
+    # S2 的记录里带(Semantic Scholar 索引了 arXiv);Crossref 那边则要看 DOI 是不是 arXiv 的。
+    arxivId: str | None = None
 
     # 以下两个只有展示用途,不参与落库
     citationCount: int = 0
@@ -95,3 +98,40 @@ class CandidatePaper(Paper):
 class CandidateResponse(BaseModel):
     sourceLabel: str
     papers: list[CandidatePaper]
+
+
+# ── 精读问答(REQ-003) ─────────────────────────────────────
+
+
+class QaTurn(BaseModel):
+    """一轮对话。历史由前端持有并随请求带上,服务端不维持会话状态。"""
+
+    role: str = Field(pattern="^(user|assistant)$")
+    content: str = Field(min_length=1, max_length=8000)
+
+
+class QaRequest(BaseModel):
+    # 用 arXiv ID 而不是本地 paperId:全文是从 arXiv 抓的,这个服务不认识本地库
+    arxivId: str = Field(min_length=3, max_length=64)
+    question: str = Field(min_length=2, max_length=2000)
+    history: list[QaTurn] = Field(default_factory=list, max_length=40)
+
+
+class Citation(BaseModel):
+    """一条依据。
+
+    `excerpt` 是**后端从原文直接取的**,不经过模型 —— 让它抄原文,它就会编原文,
+    而编造的引用比答错更糟:它看起来像证据。
+    """
+
+    index: int
+    title: str
+    excerpt: str
+
+
+class QaResponse(BaseModel):
+    answer: str
+    citations: list[Citation]
+    omittedTurns: int = Field(
+        default=0, description="因为超出上下文预算被丢掉的旧轮次数。丢的时候要让用户知道"
+    )

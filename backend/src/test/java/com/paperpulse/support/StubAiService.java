@@ -28,6 +28,7 @@ public class StubAiService {
 
     private final Endpoint search = new Endpoint();
     private final Endpoint candidates = new Endpoint();
+    private final Endpoint qa = new Endpoint();
 
     /** 一个接口的可配置响应与收到的请求体。 */
     public static final class Endpoint {
@@ -71,6 +72,7 @@ public class StubAiService {
 
         server.createContext("/search", exchange -> handle(exchange, search));
         server.createContext("/recommend/candidates", exchange -> handle(exchange, candidates));
+        server.createContext("/qa", exchange -> handle(exchange, qa));
 
         server.start();
     }
@@ -103,8 +105,14 @@ public class StubAiService {
         return candidates;
     }
 
+    /** 精读问答接口:{@code POST /qa} */
+    public Endpoint qa() {
+        return qa;
+    }
+
     public void reset() {
         search.reset();
         candidates.reset();
+        qa.reset();
     }
 }

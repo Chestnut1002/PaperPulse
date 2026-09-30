@@ -23,6 +23,12 @@ const routes = [
         component: () => import('../views/RecommendView.vue'),
         meta: { navLabel: '今日推荐' },
       },
+      // 精读页也不占导航位 —— 它是从某篇论文进去的
+      {
+        path: 'papers/:paperId/reading',
+        name: 'reading',
+        component: () => import('../views/PaperReadingView.vue'),
+      },
       // 账号信息不做成导航项 —— 从顶栏的用户名进,它不值得占一个菜单位置
       {
         path: 'account',
