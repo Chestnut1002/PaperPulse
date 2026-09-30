@@ -1,6 +1,6 @@
 # CHANGELOG
 
-## v0.2.0 (2026-09-16,未发布)
+## v0.2.0 (2026-09-16 起,未发布)
 
 新增:
 - **REQ-001 用户系统(已完成)**
@@ -29,8 +29,11 @@
     (实测八个线程并发有七个撞唯一约束),插入走独立的 `REQUIRES_NEW` 事务
   - `applyMetadata` 只覆盖非空字段 —— 一次信息不全的提交不会把已存好的摘要抹掉
   - 列表接口批量取论文(一次查询),避免 N+1
-- **集成测试**(`mvn test` 可跑,共 66 条:F3=10、F4=9、E=6、F5=15、F6=25、上下文=1)
-  - 起真实容器 + 真实 Tomcat + 真实 MySQL,用真实 HTTP 请求验证,不用 mock
+- **集成测试**(`mvn test` 可跑,现共 **199 条**,分 16 个测试类;逐类清单见 README「测试」一节)
+  - 起真实容器 + 真实 Tomcat + 真实 MySQL,用真实 HTTP 请求验证
+  - **唯一的替身是 ai-service** —— 检索 / 推荐 / 精读 / 反查这几个测试类用 `StubAiService`
+    (JDK 自带的 `HttpServer`)顶掉 Python 侧;验证的是后端在真实 HTTP 往返下的行为,
+    检索质量本身由 ai-service 自己的 146 条测试覆盖
   - `ApiClient`:基于 JDK `HttpClient` 的测试客户端(`TestRestTemplate` 在 Spring Boot 4 中已移除)
   - `TokenForger`:用 `javax.crypto.Mac` **独立**签 JWT,不借助 jjwt —— 否则等于用被测实现验证它自己
   - `TestDatabaseGuard`:容器启动前核对库名,防止 `create-drop` 误删开发库数据
@@ -68,7 +71,7 @@
   - 顶栏外壳改版:自绘导航(不用 `el-menu`),导航项由路由表推导
   - 前端测试增至 **43 条**:新增 jsdom 挂载测试,真实渲染视图并驱动交互
     (`InterestView` / `LoginView` / `AppLayout`)
-- **检索 Agent(REQ-002,S1–S4)**
+- **检索 Agent(REQ-002,S1–S6)**
   - **Python 侧** `POST /search`:自然语言 → Agent 拆解 → 多源检索 → 带来源的论文列表
     - 查询拆解 `app/agent.py`:一个提示词 + `response_format: json_object`,**不引 LangChain**
       (要的是一次结构化输出,不是一套编排框架)
@@ -189,7 +192,7 @@
   - `scripts/kill-port.ps1`:清理残留占用端口的开发服务进程
   - `scratch/cleanup_test_data.py`(本机,不进仓库):清理冒烟测试留下的一次性账号
   - `scratch/source_probe.py`(本机,不进仓库):探测各数据源在本机是否可用 —— 网络会变,别凭记忆选型
-- **个性化推荐**(REQ-004 后端,前端页面待做)
+- **个性化推荐**(REQ-004 后端)
   - `GET /api/users/me/recommendations`:按兴趣标签推荐论文,每条附**推荐理由**
   - **候选从检索来,不是从库里挑** —— 库里的论文是用户自己搜过的,拿它推荐等于把已知的东西再推一遍。
     每个兴趣标签自带检索词(`InterestTag.s2Query`),当初就是为这一步准备的
@@ -288,6 +291,37 @@
   - 新增 `ai-service/.env.example` —— ai-service 真正读取的那个文件此前没有模板
   - README 补「配置放哪里」对照表;删掉原写在**前端**小节下、却让读者"参照 `.env.example`"的那句
     (前端不读任何环境变量)
+- **时间范围在返回路上被丢掉**:Agent 已经从"找 2024 年以后的"里拆出了 `yearFrom` / `yearTo`,
+  但后端映射时只取了 `keywords` 与 `rationale`,两个年份直接丢弃 ——
+  前端的展示条件因此**永远不成立**,那句"2024 年至今"从来没有真正显示过。
+  前端测试用的是手写夹具(自己塞了 `yearFrom`),所以一直绿。
+  - `PaperSearchResponse` 补 `yearFrom` / `yearTo`,原样透传(筛选在上游已完成,
+    后端不再解读一遍,免得两处规则各自漂移)
+  - 前端**两端都认**:只说 `yearFrom` 时把"2020–2023"错显成"2020 年至今" ——
+    上界是用户自己给的,不能被说成"至今"
+  - 补 2 条后端集成测试 + 2 条前端用例(两端都有 / 两端都没有)
+- **`beautifulsoup4` 被导入却从未声明**:`reading/fulltext.py` 用了它切 arXiv 的 HTML,
+  但三个 requirements 文件里都没有 —— 本机装过所以一直跑得通,
+  **新克隆按 requirements 装完会在精读时 ImportError**。补进 `ai-service/requirements.txt`
+
+优化:
+- **文档与实现对齐**(一批过时的陈述,均以代码为准改正)
+  - README:进度表四个需求标着"待开始"而实际大部分已完成;API 一节缺 6 个后端端点
+    与全部 6 条 ai-service 路由;测试一节三处失实("66 条"、"不用 mock"、缺 `JWT_SECRET` 前提);
+    AI 服务的启动步骤缺 venv / 安装依赖 / 复制 `.env` 三步,照做**在全新克隆上跑不起来**
+  - `docs/技术选型与参考资料.md`:补性质说明 —— 它是**规划与参考**,不是当前状态;
+    RAG / Chroma / SSE / LangChain / Docker 一键起这几项**从未实现**,原文读起来却像已有
+  - `ai-service/app/sources.py` 的模块注释与它下面 21 行后的代码自相矛盾
+  - `docs/requirements.md`:删掉与实际不符的"66 条";修正数据源描述;标注 REQ-005 已交付的最小版
+  - 5 份设计文档(F6/F7/F9/F10/F11/F12)按实现改正:F9 的归一化顺序(先反转义再去标签,
+    调换会**静默漏合**)、F12 的公式问题(已在 P1b 修复)、F10 的 R3 完成状态、
+    F11 的 embedding 模型、F6 的两条过时计划
+- **删除脚手架残留**:`frontend/README.md`(Vite 模板原文)、`backend/HELP.md`、
+  `.github/modernize/`(Copilot 的 JDK 升级记录)、`.jdk/`(585MB,实测 Maven 用的是
+  `D:\develop\JAVA\jdk-26.0.1`,不引用它)
+- `AGENTS.md` / `.agents/skills/dev-standard/SKILL.md` 把所引规范的标题写作《Codex …》,
+  而原件 `docs/standards/软件工程开发规范.md` 的标题是《Claude Code …》——
+  **引用指向了一份不存在的文档**。两处改回原件标题,两份镜像恢复逐字一致(仅"读哪个文件"不同)
 
 ## v0.1.0 (2026-09-10)
 
