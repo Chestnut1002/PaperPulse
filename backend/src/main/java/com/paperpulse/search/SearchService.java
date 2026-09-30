@@ -64,6 +64,10 @@ public class SearchService {
         return new PaperSearchResponse(
                 found.query(),
                 plan == null ? "" : Objects.toString(plan.keywords(), ""),
+                // 年份照原样透传:它是给用户看的"我按什么筛的",不是给后端判断用的 ——
+                // 真正的筛选已经在上游做完了,这里再解读一遍只会让两处规则各自漂移。
+                plan == null ? null : plan.yearFrom(),
+                plan == null ? null : plan.yearTo(),
                 plan == null ? "" : Objects.toString(plan.rationale(), ""),
                 found.sourceLabel(),
                 papers);

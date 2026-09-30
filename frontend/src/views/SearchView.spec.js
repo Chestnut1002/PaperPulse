@@ -41,7 +41,7 @@ const PAPER_B = {
   url: null,
 }
 
-function searchResult(papers) {
+function searchResult(papers, overrides = {}) {
   return {
     query: '对比学习',
     keywords: 'contrastive learning recommender systems',
@@ -49,6 +49,7 @@ function searchResult(papers) {
     sourceLabel: 'Semantic Scholar',
     yearFrom: 2024,
     papers,
+    ...overrides,
   }
 }
 
@@ -145,6 +146,36 @@ describe('SearchView', () => {
     expect(host.querySelector('.plan__rationale').textContent).toContain('拆成对比学习与推荐系统')
     expect(host.textContent).toContain('数据来自 Semantic Scholar')
     expect(host.textContent).toContain('2024 年至今')
+  })
+
+  it('时间范围两端都有时按区间显示,不把用户设的上界说没了', async () => {
+    // "2020 到 2023 年之间"会同时给出 yearFrom 与 yearTo。
+    // 只认 yearFrom 的话会显示成"2020 年至今" —— 上界是用户自己给的,不能被说成"至今"。
+    searchPapers.mockResolvedValue(
+      searchResult([PAPER_A], { yearFrom: 2020, yearTo: 2023 }),
+    )
+    const { host } = await mountView()
+
+    setInput(host.querySelector('input'), '2020 到 2023 年的对比学习')
+    await flush()
+    submitSearch(host)
+    await flush()
+
+    expect(host.textContent).toContain('2020–2023 年')
+    expect(host.textContent).not.toContain('至今')
+  })
+
+  it('没有时间限制时不显示时间范围这一行', async () => {
+    // 后端此刻给的是两个 null。显示成"null 年至今"比不显示更糟。
+    searchPapers.mockResolvedValue(searchResult([PAPER_A], { yearFrom: null, yearTo: null }))
+    const { host } = await mountView()
+
+    setInput(host.querySelector('input'), '对比学习')
+    await flush()
+    submitSearch(host)
+    await flush()
+
+    expect(host.textContent).not.toContain('时间范围')
   })
 
   it('渲染结果列表:标题、作者、期刊、年份、来源', async () => {

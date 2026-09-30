@@ -1,5 +1,5 @@
 <script setup>
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import { addFavorite, fetchFavorites, recordRead, removeFavorite } from '../api/library'
@@ -26,6 +26,21 @@ const EXAMPLES = [
   '大模型做可解释推荐的最新工作',
   'graph neural network for citation recommendation',
 ]
+
+/**
+ * 时间范围的展示文案。
+ *
+ * 两端都要认:`yearTo` 通常为 null(说"2024 年以后的"这类),
+ * 但"2020 到 2023 年之间的"会同时给出两端 —— 那时只说"2020 年至今"就是错的。
+ * 只有一端时,缺的那端才是"不限"。
+ */
+const yearRange = computed(() => {
+  const { yearFrom, yearTo } = result.value ?? {}
+  if (yearFrom && yearTo) return `${yearFrom}–${yearTo} 年`
+  if (yearFrom) return `${yearFrom} 年至今`
+  if (yearTo) return `截至 ${yearTo} 年`
+  return ''
+})
 
 async function runSearch(text) {
   const keyword = (text ?? query.value).trim()
@@ -159,9 +174,9 @@ onMounted(async () => {
             <dt>检索词</dt>
             <dd class="plan__keywords">{{ result.keywords }}</dd>
           </div>
-          <div v-if="result.yearFrom" class="plan__row">
+          <div v-if="yearRange" class="plan__row">
             <dt>时间范围</dt>
-            <dd>{{ result.yearFrom }} 年至今</dd>
+            <dd>{{ yearRange }}</dd>
           </div>
         </dl>
         <p class="plan__rationale">{{ result.rationale }}</p>

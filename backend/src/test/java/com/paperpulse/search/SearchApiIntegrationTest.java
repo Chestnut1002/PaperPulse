@@ -120,6 +120,43 @@ class SearchApiIntegrationTest extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("拆解出的时间范围原样透传,两端各是各的")
+    void forwardsYearRangeFromPlan() {
+        // "2020 到 2023 年之间"这类说法会同时给出两端。
+        // 前端只认 yearFrom 的话,这种查询会被显示成"2020 年至今" —— 把用户自己设的上界说没了。
+        AI_STUB.search().respondWith(200, """
+                {"query": "q",
+                 "plan": {"keywords": "k", "yearFrom": 2020, "yearTo": 2023, "rationale": "r"},
+                 "sourceLabel": "Crossref", "papers": []}
+                """);
+        String token = registerAndLogin("searcher");
+
+        ApiClient.Response response = search(token, Map.of("query", "2020 到 2023 年的扩散模型"));
+
+        assertThat(response.status()).as(response.describe()).isEqualTo(200);
+        assertThat(response.at("yearFrom").asInt()).isEqualTo(2020);
+        assertThat(response.at("yearTo").asInt()).isEqualTo(2023);
+    }
+
+    @Test
+    @DisplayName("没有时间限制时年份是 null,而不是 0 —— '不限'与'公元 0 年'不是一回事")
+    void omitsYearRangeWhenUnconstrained() {
+        // EMPTY_RESULT 的 plan 里根本没有年份字段,这是"用户没提时间"的常见形状
+        AI_STUB.search().respondWith(200, EMPTY_RESULT);
+        String token = registerAndLogin("searcher");
+
+        ApiClient.Response response = search(token, Map.of("query", "扩散模型"));
+
+        // 用 == null || isNull() 而不是直接 at(...).isNull():字段缺失时 at() 返回 Java null,
+        // 直接解引用会抛 NPE,断言失败的信息反而变成了"空指针"。
+        // 对前端来说两者等价(都是 falsy),但测试不该把"字段没了"和"字段是 null"混为一种。
+        JsonNode yearFrom = response.at("yearFrom");
+        JsonNode yearTo = response.at("yearTo");
+        assertThat(yearFrom == null || yearFrom.isNull()).as("不限就该是 null,而不是 0").isTrue();
+        assertThat(yearTo == null || yearTo.isNull()).as("不限就该是 null,而不是 0").isTrue();
+    }
+
+    @Test
     @DisplayName("检索到的论文可直接收藏 —— 客户端不必再提交任何元数据")
     void searchedPapersCanBeFavoritedDirectly() {
         AI_STUB.search().respondWith(200, TWO_PAPERS);
