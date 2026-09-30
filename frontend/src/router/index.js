@@ -10,9 +10,16 @@ const routes = [
     component: () => import('../layouts/AppLayout.vue'),
     meta: { requiresAuth: true },
     children: [
+      // 首页只用本地数据,秒开 —— 推荐页要等十来秒,不能放在落地的位置
       {
         path: '',
         name: 'home',
+        component: () => import('../views/OverviewView.vue'),
+        meta: { navLabel: '首页' },
+      },
+      {
+        path: 'recommendations',
+        name: 'recommendations',
         component: () => import('../views/RecommendView.vue'),
         meta: { navLabel: '今日推荐' },
       },
