@@ -13,8 +13,14 @@ const routes = [
       {
         path: '',
         name: 'home',
-        component: () => import('../views/HomeView.vue'),
-        meta: { navLabel: '首页' },
+        component: () => import('../views/RecommendView.vue'),
+        meta: { navLabel: '今日推荐' },
+      },
+      // 账号信息不做成导航项 —— 从顶栏的用户名进,它不值得占一个菜单位置
+      {
+        path: 'account',
+        name: 'account',
+        component: () => import('../views/AccountView.vue'),
       },
       {
         path: 'search',

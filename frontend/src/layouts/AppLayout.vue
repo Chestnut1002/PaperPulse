@@ -37,8 +37,11 @@ function signOut() {
       </nav>
 
       <div class="shell__user">
-        <span class="avatar">{{ initial }}</span>
-        <span class="shell__name">{{ authStore.user?.username }}</span>
+        <!-- 账号信息页从用户名进,不占导航位 -->
+        <router-link class="shell__account" :to="{ name: 'account' }">
+          <span class="avatar">{{ initial }}</span>
+          <span class="shell__name">{{ authStore.user?.username }}</span>
+        </router-link>
         <span class="shell__sep" />
         <button class="linkbtn" type="button" @click="signOut">退出登录</button>
       </div>
@@ -112,6 +115,24 @@ function signOut() {
   align-items: center;
   gap: var(--pp-space-2);
   margin-left: auto;
+}
+
+.shell__account {
+  display: flex;
+  align-items: center;
+  gap: var(--pp-space-2);
+  text-decoration: none;
+  transition: color var(--pp-dur) var(--pp-ease);
+}
+
+.shell__account:hover .shell__name {
+  color: var(--pp-ink);
+}
+
+.shell__account:focus-visible {
+  outline: none;
+  box-shadow: var(--pp-ring);
+  border-radius: var(--pp-radius-sm);
 }
 
 .shell__name {

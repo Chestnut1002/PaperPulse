@@ -21,6 +21,8 @@ vi.mock('../api/auth', () => ({
 function buildRoutes() {
   return [
     { path: '/login', name: 'login', component: { render: () => h('div', 'login') } },
+    // 账号页不在导航里(从顶栏用户名进),所以推不出 navItems,得单独列
+    { path: '/account', name: 'account', component: { render: () => h('div', 'account') } },
     {
       path: '/',
       component: AppLayout,

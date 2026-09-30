@@ -2612,6 +2612,91 @@ F6 的 25 条、检索的 15 条、合并的 11 条全部无回归。
 2. **REQ-006 离线评测**:现在有了基线,可以量 Recall@K / NDCG@K 了
 3. 接 OpenAlex(DOI 齐全,提高第一级命中率)
 4. REQ-003 精读问答(RAG)
+
+# 2026-09-30(第六次)
+
+## 本次目标
+
+两件事:补上前一轮漏掉的设计文档,再做 REQ-004 的前端页面(R3)。
+
+## 完成内容
+
+- **补 `docs/design/F10-个性化推荐.md`** —— 见问题一
+- **前端「今日推荐」页**并**设为首页**:推荐列表 + **每条显示推荐理由** + 收藏 + 侧栏兴趣标签
+- **原首页改成「账号」页**(`/account`),从顶栏用户名进入,不占导航位
+- 「等待中」的样式从检索页提到 `styles/components.css`(第二处要用它)
+
+## 修改文件
+
+| 文件 | 修改 |
+| ---- | ---- |
+| `docs/design/F10-个性化推荐.md` | 新增:设计文档(按 skill 要求的八节) |
+| `frontend/src/views/RecommendView.vue`、`RecommendView.spec.js` | 新增:推荐页与 9 条测试 |
+| `frontend/src/api/recommendations.js` | 新增 |
+| `frontend/src/views/HomeView.vue` → `AccountView.vue` | 改名并移到 `/account` |
+| `frontend/src/router/index.js` | `/` 指向推荐页;加 `/account` |
+| `frontend/src/layouts/AppLayout.vue` | 用户名变成指向账号页的链接 |
+| `frontend/src/styles/components.css`、`SearchView.vue` | 提取共享的「等待中」样式 |
+
+## 遇到问题
+
+### 问题一(流程违规,自查发现):REQ-004 没有设计文档
+
+用户问「记录开发过程中的问题,skill 里没有相关规定吗」—— 顺着这个问题去查 skill 原文,
+发现 skill 第 7 步明确要求 dev-log 每次必须含「遇到问题 / 解决方案」两节,
+而**第 3 步还写着「重大功能开发前必须输出设计文档,保存到 docs/design/」**。
+
+`docs/design/` 里 F5 → F6 → F7 → F8 → F9 一路排下来,**到 REQ-004 断了**。
+它是明确的重大功能(新算法模块、新接口、跨两个服务),却只写在 dev-log 和一个提交里。
+
+**这不是模糊地带,是明文规定的漏做。** 已按 skill 要求的八节补齐 `F10-个性化推荐.md`。
+
+**另一件相关的事**:skill 规定了「dev-log 必须有『遇到问题』一节」,但**没规定什么算值得记的问题**。
+我此前按"有没有教训"来取舍,于是漏掉了 `_non_empty` 那条(它确实是个问题、也确实有解决方案)。
+上一轮已补记。**现在的标准是:只要满足 skill 定义的"问题",就记;小到只是改一个笔误的,不记。**
+
+### 问题二(测试的盲区):顶栏多了一个链接,测试没跟着
+
+给顶栏用户名加上指向 `/account` 的链接后,`AppLayout` 的 4 条测试全红 ——
+它用一个精简的路由器,里面的路由由 `navItems` 推导,而**账号页不是导航项**,推不出来,
+`<router-link :to="{name:'account'}">` 解析失败。
+
+这正是上一轮"断言写死的清单"那个问题的另一种形态:**测试与实现之间的契约(哪些路由存在)没有单一来源**。
+补路由时加了一条注释说明它为什么不从 navItems 推导。
+
+## 测试结果
+
+### 前端(78 条,新增 9)
+
+```
+npm test
+Test Files  9 passed (9)
+Tests  78 passed (78)
+```
+
+新增推荐页 9 条:加载中说明在等什么、列表与推荐理由、顶部说明(几个兴趣、候选来自哪)、
+**没选兴趣时给引导**、有候选但为空时的建议、收藏与取消收藏、点链接记阅读、加载失败提示、侧栏标签。
+
+### 真实链路
+
+前端三个新文件都能被 dev server 编译;经 Vite 代理走一遍推荐:
+
+```
+状态 200 | 耗时 4.9 秒 | 来源 Semantic Scholar、arXiv、Crossref
+  1. A Multi-Agent Conversational Recommender System
+     命中你的兴趣「推荐系统」(权重 5) · 2024 年
+  ...
+  4. Lightweight and Direct Document Relevance Optimization
+     命中你的兴趣「信息检索」(权重 2) · 2025 年     ← 探索位
+```
+
+第 4 条来自权重 2 的次要方向,正是探索位该起的作用。
+
+## 下一步计划
+
+1. **REQ-006 离线评测** —— 基线已经就位,可以量 Recall@K / NDCG@K 了
+2. 接 OpenAlex(DOI 齐全,提高第一级命中率)
+3. REQ-003 精读问答(RAG)/ REQ-005 更丰富的推荐理由
 - **FE-3 收藏 / 历史 / 评分管理页**
 - `GET /api/interests` 的鉴权缺口(仍未修)
 - 开发库里还留着十几个测试账号与论文,需要时清一次

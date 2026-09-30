@@ -38,7 +38,7 @@ onMounted(async () => {
 <template>
   <div v-loading="loading">
     <div class="page-head">
-      <h1>首页</h1>
+      <h1>账号</h1>
       <p>当前账号信息来自服务端实查结果</p>
     </div>
 

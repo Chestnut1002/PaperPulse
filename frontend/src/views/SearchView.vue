@@ -264,52 +264,7 @@ onMounted(async () => {
   box-shadow: var(--pp-ring);
 }
 
-.waiting {
-  display: flex;
-  align-items: center;
-  gap: var(--pp-space-3);
-  margin-top: var(--pp-space-8);
-  color: var(--pp-ink-3);
-  font-size: var(--pp-text-sm);
-}
-
-.waiting__dots {
-  display: inline-flex;
-  gap: 4px;
-}
-
-.waiting__dots i {
-  width: 6px;
-  height: 6px;
-  border-radius: var(--pp-radius-pill);
-  background: var(--pp-accent);
-  animation: pp-pulse 1.2s var(--pp-ease) infinite;
-}
-
-.waiting__dots i:nth-child(2) {
-  animation-delay: 0.15s;
-}
-
-.waiting__dots i:nth-child(3) {
-  animation-delay: 0.3s;
-}
-
-@keyframes pp-pulse {
-  0%,
-  100% {
-    opacity: 0.25;
-  }
-  50% {
-    opacity: 1;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .waiting__dots i {
-    animation: none;
-    opacity: 0.6;
-  }
-}
+/* 「等待中」的样式在 styles/components.css —— 检索页与推荐页共用 */
 
 .plan {
   margin-top: var(--pp-space-6);
