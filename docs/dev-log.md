@@ -3298,3 +3298,121 @@ python scratch/reading_smoke.py
 - **FE-3 收藏 / 历史 / 评分管理页**
 - `GET /api/interests` 的鉴权缺口(仍未修)
 - 开发库里还留着十几个测试账号与论文,需要时清一次
+
+# 2026-10-01(第十二次)
+
+## 本次目标
+
+**REQ-003 阶段 3:精读前拿标题去 arXiv 反查。**
+
+全文只从 arXiv 的 HTML 版取,`paper.arxiv_id` 决定一篇论文能不能精读;
+而检索结果里只有约 50% 带这个编号(**Crossref 实测 0/11** —— 它的 DOI 是期刊 DOI,反推不出来)。
+这是"帮助用户精读论文"这个主功能当前最大的缺口,所以它排在跨论文 RAG(P2)前面。
+
+## 完成内容
+
+- **ai-service**:`POST /lookup/arxiv-by-title` —— 拿标题向 arXiv 要候选
+  (先精确短语,0 条再退化到"显著词 AND");只捞不认
+- **backend**:`POST /api/papers/{id}/arxiv-lookup` —— 候选逐个过 `PaperMatcher`,
+  命中就 `attachArxivId` 落库(幂等,只填空缺);查不到返回 404 并说明原因
+- **新增退让规则** `PaperMatcher#matchesByTitleAlone` —— 库里那批"无作者、无年份"的记录
+  (实测 166 篇里有 8 篇,全部来自 Crossref)在标准规则下永远判否,arXiv 上有同名预印本也读不了
+- **frontend**:精读页的"读不了"面板给一个「在 arXiv 上找找看」按钮;
+  检索/收藏/推荐三个列表页对没编号的论文也给出入口,文案是「找可读版本」
+- **实测**:救援率、arXiv 限流行为、Crossref 图表标题垃圾记录(已记为 REQ-002 S7)
+
+## 修改文件
+
+| 文件 | 修改 |
+| ---- | ---- |
+| `ai-service/app/sources.py` | `search_arxiv_by_title`:查询清洗、短语→显著词退化;抽出 `_parse_atom_entries` / `_arxiv_entries` 供三条路复用 |
+| `ai-service/app/schemas.py`、`main.py` | 标题反查的请求/响应与新端点(空候选是 200,不是错误) |
+| `backend/.../paper/Paper.java`、`PaperService.java` | `attachArxivId`:只填空缺、幂等、走独立写事务 |
+| `backend/.../paper/PaperMatcher.java` | 新增 `matchesByTitleAlone` 退让规则(仅反查可用) |
+| `backend/.../reading/` | `resolveArxiv` 全链路 + `AiPaper`(统一候选形状)+ 新接口 + 新 DTO |
+| `frontend/src/api/reading.js` | `resolveArxiv(paperId)` |
+| `frontend/src/views/PaperReadingView.vue` | 查找按钮与三种结果(找到/没有/出错) |
+| `frontend/src/views/{Search,Library,Recommend}View.vue` | 没编号也给入口,文案「找可读版本」 |
+| `scratch/resolve_arxiv_smoke.py` | 新增:端到端冒烟 + 救援率统计 |
+
+## 技术方案
+
+**捞在 Python,认在 Java。** Python 只负责把 arXiv 上的候选捞回来;认不认由 Java 侧的
+`PaperMatcher` 决定 —— 跨源合并已经有一套经过 60 篇样本校准的规则(标题 + 作者 + 年份),
+标题反查复用同一份,不重写第二套归一化。
+
+其余决策与理由见设计文档 [F13](design/F13-标题反查arXiv.md):手动触发(等待发生在用户操作之后)、
+找到才落库(论文行是共享的,一次查到所有用户受益)、**不做负缓存**(负结果会过期,正结果不会)。
+
+## 遇到问题
+
+### 问题一(真 bug):新入口一加,前端 19 个测试全挂
+
+三个列表页的测试路由表里**没有 `reading` 这条命名路由**。此前精读链接只在有 arXiv 编号时渲染,
+而测试夹具恰好都没有编号,所以从没被解析过;改成"没编号也渲染"之后,
+`router-link` 解析不到路由,渲染直接崩(`instance.update is not a function`)。
+给三个 spec 的路由表各补一条 `name: 'reading'` 的桩路由即可。
+
+### 问题二(排查,不是 bug):头一批反查 6 篇全"没找到"
+
+6 篇无编号论文逐篇反查,全返回"arXiv 上没有找到这篇论文的预印本"。这可能是
+(a) 真的没有预印本,也可能是 (b) 我的链路有问题 —— 必须分开,不能想当然。
+
+分开的办法是**直接问 ai-service**,再看 arXiv 的原始返回。结论是两类都有:
+
+| 情况 | 篇数 | 证据 |
+| ---- | ---- | ---- |
+| arXiv 上确实没有 | 4 | 外部核实:MIGNN 是 SciTePress 会议论文、GenGCL 是 Neurocomputing 期刊论文 |
+| 有候选、标题一字不差,却被规则挡下 | 2 | 库里这两条 Crossref 记录 `authors` 空、`year` 空,标准规则要求作者+年份佐证 |
+
+第二类就是退让规则的由来(见「完成内容」)。**这也说明"0/6"当时看着像 bug,其实一半是数据本身的性质。**
+
+### 问题三:arXiv 限流时返回 429 且 body 为空
+
+连续探测触发限流后,arXiv 回 429 + 空 body。查了 `_fetch_text`:已有重试,
+重试仍失败就抛错 → 503 → 后端 502「精读服务不可用」——
+**不会把限流误判成"没找到"**,这条语义是对的,不需要改。
+
+### 问题四(自查纠正):我自己打印时把标题截断了,差点当成数据问题
+
+排查时我一度记下"某篇标题在库里被截断",后来查了完整标题 ——
+三条图表标题都以句号结尾、长度正常,截断是我 `print` 里 `[:52]` 造成的。
+**已从 requirements.md 里删掉这句没验证的话。**
+
+## 解决方案
+
+- 前端:`router-link` 指向的命名路由必须存在于测试路由表里 —— 补桩路由
+- 匹配:新增只用于反查的退让规则,**只在"我们这边零佐证"时生效**,并要求标题 ≥4 个词;
+  跨源合并继续用严格规则(合并错了不可逆,反查错了代价小一个量级)
+- 限流:维持现状(重试 → 503),不额外处理
+
+## 测试结果
+
+| 层 | 数量 | 结果 |
+| ---- | ---- | ---- |
+| ai-service | 146(新增 8) | 全通过 |
+| backend | 192(新增 11) | 全通过 |
+| frontend | 111(新增 7) | 全通过 |
+| 端到端 | `scratch/resolve_arxiv_smoke.py` | 链路与鉴权全通过;救援率见下 |
+
+**救援率的如实记录**:对真实检索结果抽了两批(14 篇无编号论文)逐篇反查,**只救回 2 篇**,
+其余 12 篇经外部核实确实"只发在期刊/会议上、从没有预印本"。两篇救回的都靠新的退让规则
+(`Polymer-Agent` → `2601.16376`、`Large Language Model Agent for Modular Task Execution` → `2507.02925`),
+已在真实链路上验证落库。
+
+**原估计"50% → 70%+"偏乐观** —— 它假设无编号论文大多有预印本,实测并非如此。
+反查救不了这类论文,剩下的缺口要靠 P4(PDF 解析)。
+
+## 顺带发现(已记为需求,本次不动手)
+
+库里 3 条 Crossref 记录的标题是**图表标题**(`Figure 3: Graph neural network.`、
+`Algorithm 2/3: …`)—— 它们不是论文,却会进检索结果、被推荐、被展示。
+记为 REQ-002 S7;同一批数据里还有 `Graph Neural Network` 这类极短标题,是否算垃圾要先量再定。
+
+## 下一步计划
+
+1. **REQ-002 S7**:过滤 Crossref 的图表标题垃圾记录(顺带量极短标题那一类)
+2. **REQ-003 P4**:非 arXiv 论文的 PDF 解析 —— 现在这才是精读覆盖率的主要缺口
+3. REQ-003 P2:跨论文 RAG
+4. REQ-004:推荐按"精品"重做(加引用数、识别综述、纳入 venue)
+5. 未决:`AGENTS.md` / `.agents/` 是否入库(本机工具配置,尚未决定)

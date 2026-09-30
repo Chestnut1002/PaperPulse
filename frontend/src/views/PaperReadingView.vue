@@ -2,7 +2,7 @@
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 
-import { askQuestion, fetchPaper } from '../api/reading'
+import { askQuestion, fetchPaper, resolveArxiv } from '../api/reading'
 import { paperMeta } from '../utils/paper'
 
 const route = useRoute()
@@ -15,6 +15,12 @@ const loadError = ref('')
 const question = ref('')
 const asking = ref(false)
 const askError = ref('')
+
+/** 标题反查的状态。**由用户点按钮触发** —— 没有编号的论文占一多半,自动查会让大多数访问白等。 */
+const finding = ref(false)
+const findMessage = ref('')
+const findError = ref('')
+const foundPreprint = ref(false)
 
 /** 对话历史。**由前端持有** —— 服务端不维持会话状态,重启不丢对话。 */
 const messages = ref([])
@@ -45,6 +51,34 @@ function segmentsOf(text) {
       const match = part.match(/^\[\[§(\d+)\]\]$/)
       return match ? { cite: Number(match[1]) } : { text: part }
     })
+}
+
+/**
+ * 拿标题去 arXiv 找这篇的预印本。
+ *
+ * 找到就地把论文换成带编号的版本 —— 问答界面随之出现,这一页不用刷新。
+ */
+async function findPreprint() {
+  if (finding.value) return
+
+  finding.value = true
+  findMessage.value = ''
+  findError.value = ''
+  try {
+    paper.value = await resolveArxiv(paperId)
+    foundPreprint.value = true
+  } catch (error) {
+    // 401 已由请求层处理(登出 + 跳登录页)
+    if (error.status === 401) return
+    if (error.status === 404) {
+      // "arXiv 上没有"是正常结果之一,服务端那句话已经说得很清楚,原样呈现
+      findMessage.value = error.message
+    } else {
+      findError.value = error.message
+    }
+  } finally {
+    finding.value = false
+  }
 }
 
 async function send() {
@@ -106,12 +140,23 @@ onMounted(async () => {
         <p class="unavailable__text">
           这篇论文没有可精读的全文 —— 目前只支持能从 arXiv 取到全文的论文。
         </p>
+        <p class="unavailable__text">可以拿它的标题去 arXiv 上找找有没有预印本:</p>
+        <el-button :loading="finding" :disabled="finding" @click="findPreprint">
+          在 arXiv 上找找看
+        </el-button>
+        <p v-if="finding" class="unavailable__note">正在查找,约需几秒 —— 找到后这篇就能直接提问了。</p>
+        <p v-if="findMessage" class="unavailable__note" role="status">{{ findMessage }}</p>
+        <p v-if="findError" class="alert" role="alert">{{ findError }}</p>
         <a v-if="paper.url" class="link" :href="paper.url" target="_blank" rel="noopener noreferrer">
           打开原文链接 →
         </a>
       </section>
 
       <section v-else class="card">
+        <p v-if="foundPreprint" class="found">
+          已在 arXiv 上找到这篇论文的预印本,下面的提问会基于它的全文。
+        </p>
+
         <div v-if="!messages.length" class="hints">
           <p class="hints__title">可以这样问:</p>
           <div class="hints__list">
@@ -192,6 +237,22 @@ onMounted(async () => {
   margin: 0 0 var(--pp-space-3);
   font-size: var(--pp-text-base);
   color: var(--pp-ink-2);
+}
+
+.unavailable__note {
+  margin: var(--pp-space-3) 0 0;
+  font-size: var(--pp-text-sm);
+  color: var(--pp-ink-3);
+}
+
+.found {
+  margin: 0 0 var(--pp-space-4);
+  padding: var(--pp-space-2) var(--pp-space-4);
+  background: var(--pp-accent-soft);
+  border: 1px solid var(--pp-accent-line);
+  border-radius: var(--pp-radius-md);
+  font-size: var(--pp-text-sm);
+  color: var(--pp-accent-deep);
 }
 
 .hints {

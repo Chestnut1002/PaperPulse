@@ -14,6 +14,16 @@ export const fetchPaper = (paperId) => client.get(`/papers/${paperId}`)
 export const openByArxiv = (reference) => client.post('/papers/from-arxiv', { reference })
 
 /**
+ * 给一篇没有 arXiv 编号的论文按标题反查预印本。
+ *
+ * **认不认由后端决定**(匹配规则只有那一份),前端只负责发起与呈现结果。
+ * 找到时后端会把编号写进库里 —— 这篇从此能精读,其他用户也不必再查。
+ *
+ * 404 表示"arXiv 上没有这篇的预印本",是正常结果之一,不是服务出错。
+ */
+export const resolveArxiv = (paperId) => client.post(`/papers/${paperId}/arxiv-lookup`)
+
+/**
  * 就一篇论文提问。
  *
  * <p>对话历史由前端带上,后端与 ai-service 都不维持会话状态。

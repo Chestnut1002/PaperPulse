@@ -59,6 +59,8 @@ async function mountView(initialQuery = '') {
       { path: '/', name: 'home', component: { render: () => h('div', 'home') } },
       { path: '/search', name: 'search', component: SearchView },
       { path: '/login', name: 'login', component: { render: () => h('div', 'login') } },
+      // 精读入口对每篇论文都渲染,路由表里少了它,router-link 解析时会炸
+      { path: '/papers/:paperId/reading', name: 'reading', component: { render: () => h('div', 'reading') } },
     ],
   })
   const host = document.createElement('div')
@@ -165,6 +167,21 @@ describe('SearchView', () => {
 
     // 作者缺失时不能说成空白
     expect(host.querySelectorAll('.paper-row__meta')[1].textContent).toContain('作者未提供')
+  })
+
+  it('没有 arXiv 编号的论文也给入口,文案说清点进去会发生什么', async () => {
+    // 精读是主功能,而这类论文(Crossref 实测 0/11 带编号)此前连入口都没有
+    searchPapers.mockResolvedValue(searchResult([{ ...PAPER_A, arxivId: '2502.19271' }, PAPER_B]))
+    const { host } = await mountView()
+
+    setInput(host.querySelector('input'), '对比学习')
+    await flush()
+    submitSearch(host)
+    await flush()
+
+    const labels = Array.from(host.querySelectorAll('.paper-row__actions a.link'))
+      .map((node) => node.textContent.trim())
+    expect(labels).toEqual(['精读', '找可读版本'])
   })
 
   it('收藏一篇论文', async () => {

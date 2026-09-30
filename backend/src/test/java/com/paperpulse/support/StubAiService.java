@@ -30,6 +30,7 @@ public class StubAiService {
     private final Endpoint candidates = new Endpoint();
     private final Endpoint qa = new Endpoint();
     private final Endpoint lookup = new Endpoint();
+    private final Endpoint titleLookup = new Endpoint();
 
     /** 一个接口的可配置响应与收到的请求体。 */
     public static final class Endpoint {
@@ -75,6 +76,8 @@ public class StubAiService {
         server.createContext("/recommend/candidates", exchange -> handle(exchange, candidates));
         server.createContext("/qa", exchange -> handle(exchange, qa));
         server.createContext("/lookup/arxiv", exchange -> handle(exchange, lookup));
+        // 与 /lookup/arxiv 只差一个后缀 —— HttpServer 按最长前缀选 context,更具体的这个会赢
+        server.createContext("/lookup/arxiv-by-title", exchange -> handle(exchange, titleLookup));
 
         server.start();
     }
@@ -117,10 +120,16 @@ public class StubAiService {
         return lookup;
     }
 
+    /** 按标题反查预印本:{@code POST /lookup/arxiv-by-title} */
+    public Endpoint titleLookup() {
+        return titleLookup;
+    }
+
     public void reset() {
         search.reset();
         candidates.reset();
         qa.reset();
         lookup.reset();
+        titleLookup.reset();
     }
 }

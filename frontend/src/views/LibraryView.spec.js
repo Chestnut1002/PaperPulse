@@ -42,7 +42,11 @@ const OTHER_PAPER = { ...PAPER, id: 12, title: '第二篇', venue: null, url: nu
 async function mountView() {
   const router = createRouter({
     history: createMemoryHistory(),
-    routes: [{ path: '/', component: LibraryView }],
+    routes: [
+      { path: '/', component: LibraryView },
+      // 精读入口对每篇论文都渲染,路由表里少了它,router-link 解析时会炸
+      { path: '/papers/:paperId/reading', name: 'reading', component: { render: () => h('div', 'reading') } },
+    ],
   })
   const host = document.createElement('div')
   document.body.appendChild(host)
@@ -116,6 +120,19 @@ describe('LibraryView', () => {
     expect(titles(host)).toEqual(['对比学习用于推荐系统'])
     expect(host.querySelector('.paper-row__meta').textContent).toContain('收藏于')
     expect(host.textContent).toContain('NeurIPS')
+  })
+
+  it('没有 arXiv 编号的收藏也给入口,文案是「找可读版本」', async () => {
+    fetchFavorites.mockResolvedValue([
+      { paper: { ...PAPER, arxivId: '2502.19271' }, favoritedAt: '2026-09-29T10:00:00Z' },
+      { paper: OTHER_PAPER, favoritedAt: '2026-09-29T10:00:00Z' },
+    ])
+
+    const { host } = await mountView()
+
+    const labels = Array.from(host.querySelectorAll('.paper-row__actions a.link'))
+      .map((node) => node.textContent.trim())
+    expect(labels).toEqual(['精读', '找可读版本'])
   })
 
   it('三个标签页的空态说的是不同的话', async () => {

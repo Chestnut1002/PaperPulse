@@ -15,6 +15,8 @@ from .reading.qa import ContextTooLong, ask
 from .schemas import (
     ArxivLookupRequest,
     ArxivLookupResponse,
+    ArxivTitleLookupRequest,
+    ArxivTitleLookupResponse,
     CandidateRequest,
     CandidateResponse,
     Citation,
@@ -23,7 +25,13 @@ from .schemas import (
     SearchRequest,
     SearchResponse,
 )
-from .sources import AllSourcesFailed, fetch_arxiv_by_id, find_candidates, search_papers
+from .sources import (
+    AllSourcesFailed,
+    fetch_arxiv_by_id,
+    find_candidates,
+    search_arxiv_by_title,
+    search_papers,
+)
 
 # 全文缓存在服务启动时建一次,进程内复用
 _full_text_store = FullTextStore(config.FULLTEXT_CACHE_DIR)
@@ -110,6 +118,23 @@ def lookup_arxiv(payload: ArxivLookupRequest) -> ArxivLookupResponse:
     # 编号不存在时返回 found=false,而不是 404 —— 写错编号是常见情况,
     # 调用方据此给一句人话即可,没必要把它当异常
     return ArxivLookupResponse(found=paper is not None, paper=paper)
+
+
+@app.post("/lookup/arxiv-by-title", response_model=ArxivTitleLookupResponse)
+def lookup_arxiv_by_title(payload: ArxivTitleLookupRequest) -> ArxivTitleLookupResponse:
+    """按标题找 arXiv 上的预印本(REQ-003 P3)。
+
+    <p>用在"库里这篇没有 arXiv 编号、精读不了"那条路上 —— 找到预印本就能补上编号。
+    候选由 Java 侧的匹配规则决定认不认,**这里只负责捞**。
+
+    <p>空列表是正常结果(arXiv 上确实没有),照常返回 200。
+    """
+    try:
+        candidates = search_arxiv_by_title(payload.title)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=f"取 arXiv 元数据失败:{exc}") from exc
+
+    return ArxivTitleLookupResponse(candidates=candidates)
 
 
 @app.post("/qa", response_model=QaResponse)

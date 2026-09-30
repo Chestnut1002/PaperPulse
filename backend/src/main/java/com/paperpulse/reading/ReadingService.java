@@ -2,10 +2,12 @@ package com.paperpulse.reading;
 
 import com.paperpulse.common.ApiException;
 import com.paperpulse.paper.Paper;
+import com.paperpulse.paper.PaperMatcher;
 import com.paperpulse.paper.PaperService;
 import com.paperpulse.paper.dto.PaperInput;
 import com.paperpulse.paper.dto.PaperResponse;
 import com.paperpulse.reading.dto.AiArxivLookupResponse;
+import com.paperpulse.reading.dto.AiPaper;
 import com.paperpulse.reading.dto.QaRequest;
 import com.paperpulse.reading.dto.QaResponse;
 import com.paperpulse.user.UserService;
@@ -69,12 +71,61 @@ public class ReadingService {
             throw ApiException.notFound("arXiv 上找不到这个编号:" + arxivId);
         }
 
-        AiArxivLookupResponse.Paper paper = found.paper();
+        AiPaper paper = found.paper();
         // 走既有的 resolve:跨来源合并会自动生效(这篇如果已经以别的身份在库里,不会多存一行)
         return PaperResponse.of(paperService.resolve(new PaperInput(
                 paper.source(), paper.externalId(), paper.doi(), paper.arxivId(),
                 paper.title(), paper.authors(), paper.abstractText(),
                 paper.publicationYear(), paper.venue(), paper.url())));
+    }
+
+    /**
+     * 给一篇没有 arXiv 编号的论文按标题反查预印本(REQ-003 P3)。**幂等**。
+     *
+     * <p>用在精读页的"读不了"面板上:查到就把编号补进这一行 —— 这篇从此能精读,
+     * 而且**所有用户**都不必再查。查不到是常态(期刊论文未必有预印本),
+     * 返回 404 并给一句人话,不当作服务出错。
+     *
+     * <p><b>认不认由这里决定,不交给 Python</b>:候选逐个过 {@link PaperMatcher}
+     * (标题 + 作者 + 年份,三条件全中;我们自己的记录没有作者与年份时,退让到"标题完全一致
+     * 且足够长")—— 认错的代价是把用户领到另一篇论文的全文上,那是不可逆的误导。
+     */
+    public PaperResponse resolveArxiv(Long userId, Long paperId) {
+        userService.getById(userId);
+
+        Paper paper = paperService.require(paperId);
+        String arxivId = paper.getArxivId();
+        if (arxivId != null && !arxivId.isBlank()) {
+            // 已经有编号:直接返回,不麻烦上游 —— 这个接口本来就可能被重复点
+            return PaperResponse.of(paper);
+        }
+
+        List<AiPaper> candidates = aiReadingClient.lookupArxivByTitle(paper.getTitle()).candidates();
+        for (AiPaper candidate : candidates) {
+            if (candidate.arxivId() == null || candidate.arxivId().isBlank()) {
+                continue; // 没有编号的候选对"能不能精读"毫无帮助
+            }
+            if (isSamePaper(paper, candidate)) {
+                return PaperResponse.of(paperService.attachArxivId(paperId, candidate.arxivId()));
+            }
+        }
+
+        throw ApiException.notFound("arXiv 上没有找到这篇论文的预印本");
+    }
+
+    /**
+     * 库里这篇与 arXiv 候选是不是同一篇。
+     *
+     * <p>先按标准规则(标题 + 作者 + 年份);再由 {@link PaperMatcher#matchesByTitleAlone}
+     * 兜住"我们这边无作者、无年份"的记录 —— 这类记录(实测库里 8 篇,全来自 Crossref)
+     * 在标准规则下永远判否,arXiv 上就算有标题一字不差的预印本也读不了。
+     */
+    private boolean isSamePaper(Paper paper, AiPaper candidate) {
+        return PaperMatcher.matches(paper.getTitle(), paper.getAuthors(), paper.getPublicationYear(),
+                candidate.title(), candidate.authors(), candidate.publicationYear())
+                || PaperMatcher.matchesByTitleAlone(paper.getTitle(), paper.getAuthors(),
+                paper.getPublicationYear(), candidate.title(), candidate.authors(),
+                candidate.publicationYear());
     }
 
     private static List<Map<String, String>> turnsOf(QaRequest request) {

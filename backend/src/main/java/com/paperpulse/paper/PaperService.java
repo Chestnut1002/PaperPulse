@@ -184,6 +184,22 @@ public class PaperService {
                 .findFirst();
     }
 
+    /**
+     * 给一篇论文补上 arXiv 编号(REQ-003 P3 的标题反查)。**幂等**:已有编号时原样返回。
+     *
+     * <p>写在自己的写事务里,与其余写路径一致 —— 论文行是所有用户共享的,
+     * 并发补同一个编号时后到的那个只是"没改动",不会报错也不会覆盖。
+     */
+    public Paper attachArxivId(Long paperId, String arxivId) {
+        return Objects.requireNonNull(writeTransaction.execute(status -> {
+            Paper paper = require(paperId);
+            if (!paper.attachArxivId(arxivId, Instant.now())) {
+                return paper;
+            }
+            return paperRepository.save(paper);
+        }), "写事务没有返回结果");
+    }
+
     /** 按 id 取,不存在抛 404。 */
     @Transactional(readOnly = true)
     public Paper require(Long paperId) {

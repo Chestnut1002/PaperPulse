@@ -221,6 +221,23 @@ public class Paper {
     }
 
     /**
+     * 补上 arXiv 编号(**只填空缺**)。用在 REQ-003 P3 的标题反查上:
+     * 查到预印本后把编号写进这一行,这篇从此能精读,而且**所有用户**都不必再查一次。
+     *
+     * <p>用 {@link #fillIfAbsent} 而不是覆盖:同一篇论文的编号只会有一个,
+     * 已有值时再写一次没有意义,还会把 {@code metadataUpdatedAt} 无谓地推新。
+     *
+     * @return 是否真的写入了
+     */
+    public boolean attachArxivId(String raw, Instant now) {
+        boolean changed = fillIfAbsent(arxivId, normalizeArxivId(raw), value -> arxivId = value);
+        if (changed) {
+            this.metadataUpdatedAt = now;
+        }
+        return changed;
+    }
+
+    /**
      * arXiv 编号的规范化:去掉版本后缀。
      *
      * <p>{@code 2502.19271v2} 与 {@code 2502.19271} 是**同一篇的不同修订**,

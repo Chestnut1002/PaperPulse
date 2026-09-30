@@ -296,6 +296,28 @@ def search_crossref(keywords: str, limit: int,
                     year_from, year_to)
 
 
+def _parse_atom_entries(text: str) -> list[ET.Element]:
+    """把 arXiv 返回的 Atom 文本解析成条目列表。
+
+    抽出来是因为**标题反查与关键词检索是两条路、同一段解析**:
+    `id_list` 那条路(按编号取)也用同一份,免得三处各写一遍 try/except。
+    """
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as exc:
+        raise RuntimeError(f"arXiv 返回的不是合法 XML:{exc}") from exc
+    return root.findall(f"{ATOM}entry")
+
+
+def _arxiv_entries(query: str, limit: int) -> list[ET.Element]:
+    """按 arXiv 的查询语法取回条目。两条标题查询路径的差异只在 query 怎么拼。"""
+    return _parse_atom_entries(_fetch_text(
+        ARXIV_API,
+        {"search_query": query, "max_results": limit, "sortBy": "relevance"},
+        "arXiv",
+    ))
+
+
 def _strip_arxiv_version(arxiv_id: str) -> str:
     """去掉版本后缀。
 
@@ -354,18 +376,7 @@ def search_arxiv(keywords: str, limit: int,
         end = f"{year_to or 2999}12312359"
         query = f"{query} AND submittedDate:[{start} TO {end}]"
 
-    text = _fetch_text(
-        ARXIV_API,
-        {"search_query": query, "max_results": limit, "sortBy": "relevance"},
-        "arXiv",
-    )
-
-    try:
-        root = ET.fromstring(text)
-    except ET.ParseError as exc:
-        raise RuntimeError(f"arXiv 返回的不是合法 XML:{exc}") from exc
-
-    return _collect([arxiv_to_paper(entry) for entry in root.findall(f"{ATOM}entry")],
+    return _collect([arxiv_to_paper(entry) for entry in _arxiv_entries(query, limit)],
                     year_from, year_to)
 
 
@@ -378,12 +389,7 @@ def fetch_arxiv_by_id(arxiv_id: str) -> dict | None:
     标题为 `Error` 的假论文。不识别它的话,用户会得到一篇叫 "Error" 的论文。
     """
     text = _fetch_text(ARXIV_API, {"id_list": arxiv_id, "max_results": 1}, "arXiv")
-    try:
-        root = ET.fromstring(text)
-    except ET.ParseError as exc:
-        raise RuntimeError(f"arXiv 返回的不是合法 XML:{exc}") from exc
-
-    entries = root.findall(f"{ATOM}entry")
+    entries = _parse_atom_entries(text)
     if not entries:
         return None
 
@@ -392,6 +398,86 @@ def fetch_arxiv_by_id(arxiv_id: str) -> dict | None:
     if _clean_text(entry.findtext(f"{ATOM}title")) == "Error":
         return None
     return arxiv_to_paper(entry)
+
+
+# ------------------------------------------------------- 按标题反查(REQ-003 P3)
+
+# 标题反查最多取回多少候选。多了没用 —— "认不认"由 Java 侧的匹配规则逐个过,
+# 而每多一条就多一分把噪声当证据的机会。
+_TITLE_LOOKUP_LIMIT = 8
+
+# 退化查询最多保留几个显著词。AND 越多越精确、也越容易因一处措辞差异而全落空。
+_TITLE_QUERY_MAX_WORDS = 8
+
+# 标题里这些字符是 arXiv 查询语法的一部分(& | ( ) " 等)。
+# **实测非得剔掉不可**:arXiv 遇到它们不报错,而是**静默改写成另一个查询** ——
+# `ti:a & b` 会变成 `ti:a OR all:b`,搜出来的是完全不相干的东西。
+_QUERY_UNSAFE = re.compile(r"[^\w \-.,:]+")
+
+# 退化查询里丢掉的词:英文虚词。**只丢虚词,不丢内容词** ——
+# 内容词即使很常见(如 learning),丢多了会让查询失去区分度、把正确的那篇挤出候选。
+_STOPWORDS = frozenset("""
+a an the and or of for with without from into over under between through via using
+based towards toward on in at to by is are was were be been this that these those
+""".split())
+
+
+def _clean_query_text(title: str) -> str:
+    """把标题清理成能安全拼进 arXiv 查询的样子。规则见 {@link _QUERY_UNSAFE}。"""
+    text = html.unescape(title or "")
+    text = re.sub(r"<[^>]+>", " ", text)  # 万一还带着标签(历史数据)
+    text = _QUERY_UNSAFE.sub(" ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _title_phrase_query(title: str) -> str | None:
+    """精确短语查询。**最准,但措辞差一个内容词就 0 条**(实测)。"""
+    cleaned = _clean_query_text(title)
+    return f'ti:"{cleaned}"' if cleaned else None
+
+
+def _title_words_query(title: str) -> str | None:
+    """退化查询:显著词逐个 AND。实测措辞有出入时它还能找到。
+
+    超过上限时保留**最长的几个词**(长词更可能有区分度),再按原顺序拼回去 ——
+    查询的顺序不影响结果,但拼得像人写的更好读日志。
+    """
+    words = [word for word in _clean_query_text(title).split()
+             if len(word) >= 3 and word.lower() not in _STOPWORDS]
+    if not words:
+        return None
+
+    if len(words) > _TITLE_QUERY_MAX_WORDS:
+        longest = sorted(range(len(words)), key=lambda index: len(words[index]),
+                         reverse=True)[:_TITLE_QUERY_MAX_WORDS]
+        words = [words[index] for index in sorted(longest)]
+
+    return " AND ".join(f"ti:{word}" for word in words)
+
+
+def search_arxiv_by_title(title: str, limit: int = _TITLE_LOOKUP_LIMIT) -> list[dict]:
+    """按标题找 arXiv 上的预印本;找不到返回空列表。
+
+    <p>用在"库里已有这篇论文(多半来自 Crossref),但它没有 arXiv 编号、
+    所以精读不了"那条路上 —— 拿标题去 arXiv 找它的预印本,找到就能补上编号。
+
+    <p>**这里只负责"捞",不负责"认"。** 判"是不是同一篇"的规则复用 Java 侧的
+    {@code PaperMatcher}(标题 + 作者 + 年份),不在这里重写第二套归一化 ——
+    两处各写一套迟早会不一致,而认错的代价是把用户领到**另一篇论文**上。
+
+    <p>两步:先精确短语,再退化为显著词 AND。两次都空 = 没找到,
+    是**正常结果**,不是异常(调用方按空列表处理)。
+    """
+    for query in (_title_phrase_query(title), _title_words_query(title)):
+        if not query:
+            continue
+
+        papers = _collect(
+            [arxiv_to_paper(entry) for entry in _arxiv_entries(query, limit)], None, None)
+        if papers:
+            return papers
+
+    return []
 
 
 SOURCES: list[Source] = [

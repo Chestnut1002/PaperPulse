@@ -200,11 +200,13 @@ onMounted(async () => {
 
             <div class="paper-row__actions">
               <router-link
-                v-if="paper.arxivId"
                 class="link"
                 :to="{ name: 'reading', params: { paperId: paper.id } }"
+                :title="paper.arxivId
+                  ? '用它的 arXiv 全文做问答'
+                  : '这篇还没有 arXiv 编号:点进去会先拿标题去 arXiv 找预印本'"
               >
-                精读
+                {{ paper.arxivId ? '精读' : '找可读版本' }}
               </router-link>
               <el-button
                 size="small"

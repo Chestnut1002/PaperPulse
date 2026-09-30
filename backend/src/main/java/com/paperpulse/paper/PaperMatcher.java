@@ -125,6 +125,41 @@ public final class PaperMatcher {
         return authorsKeyA.equals(authorsKeyB);
     }
 
+    /**
+     * 只凭标题认定时,标题至少要有几个词。
+     *
+     * <p>挡掉 "Editorial"、"Preface" 这类通用短标题 —— 它们重名是常有的事。
+     */
+    public static final int MIN_TITLE_WORDS_FOR_TITLE_ONLY = 4;
+
+    /**
+     * **反查专用**的退让规则:我们这边没有任何佐证时,标题完全一致就认。
+     *
+     * <p>标准规则({@link #matches})要求作者与年份佐证,而我们自己的记录**缺这两项**时
+     * 它永远判否 —— 于是就算 arXiv 上有一篇标题一字不差的预印本,也读不了。
+     * 实测(2026-10-01)确实存在这种记录:库里 166 篇里有 8 篇「无编号 + 无作者 + 无年份」,
+     * 全部来自 Crossref,例如 "Polymer-Agent: Large Language Model Agent for Polymer Design" ——
+     * arXiv 上有同名的 2601.16376,标准规则却认不出来。
+     *
+     * <p><b>退让只在"我们什么都拿不出"时生效</b>:一旦有作者或年份,就必须走标准规则核对。
+     * 这是刻意的 —— 有佐证却不用,才是真正的隐患。
+     *
+     * <p><b>只给反查用,跨源合并不许用</b>:合并错了是把两篇论文并成一篇、收藏评分挂错地方,
+     * 不可逆;反查错了只是把用户领到标题相同的另一篇全文上,代价小一个量级。
+     */
+    public static boolean matchesByTitleAlone(String titleA, List<String> authorsA, Integer yearA,
+                                              String titleB, List<String> authorsB, Integer yearB) {
+        if (yearA != null || !authorKey(authorsA).isEmpty()) {
+            return false;
+        }
+
+        String keyA = titleKey(titleA);
+        if (keyA.isEmpty() || !keyA.equals(titleKey(titleB))) {
+            return false;
+        }
+        return keyA.split(" ").length >= MIN_TITLE_WORDS_FOR_TITLE_ONLY;
+    }
+
     // ── 内部 ────────────────────────────────────────────────
 
     private static String surnameOf(String author) {

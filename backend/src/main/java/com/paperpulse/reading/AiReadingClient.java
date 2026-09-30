@@ -2,6 +2,7 @@ package com.paperpulse.reading;
 
 import com.paperpulse.common.ApiException;
 import com.paperpulse.reading.dto.AiArxivLookupResponse;
+import com.paperpulse.reading.dto.AiArxivTitleLookupResponse;
 import com.paperpulse.reading.dto.QaResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -60,6 +61,33 @@ public class AiReadingClient {
                     .body(Map.of("arxivId", arxivId))
                     .retrieve()
                     .body(AiArxivLookupResponse.class);
+
+            if (response == null) {
+                throw ApiException.badGateway("精读服务返回了空响应");
+            }
+            return response;
+        } catch (RestClientResponseException ex) {
+            throw mapUpstreamError(ex);
+        } catch (RestClientException ex) {
+            log.warn("连接 ai-service 失败", ex);
+            throw ApiException.serviceUnavailable("精读服务不可用,请确认 ai-service 已启动");
+        }
+    }
+
+    /**
+     * 按标题找 arXiv 上的预印本。
+     *
+     * <p>**只捞不认**:返回的是候选列表,认不认由调用方按 {@code PaperMatcher} 决定 ——
+     * 匹配规则只有一份,不在这里也不在 Python 侧重写。
+     */
+    public AiArxivTitleLookupResponse lookupArxivByTitle(String title) {
+        try {
+            AiArxivTitleLookupResponse response = restClient.post()
+                    .uri("/lookup/arxiv-by-title")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("title", title))
+                    .retrieve()
+                    .body(AiArxivTitleLookupResponse.class);
 
             if (response == null) {
                 throw ApiException.badGateway("精读服务返回了空响应");

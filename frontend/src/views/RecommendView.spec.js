@@ -48,6 +48,8 @@ async function mountView() {
       { path: '/', component: RecommendView },
       { path: '/interests', name: 'interests', component: { render: () => h('div', 'interests') } },
       { path: '/account', name: 'account', component: { render: () => h('div', 'account') } },
+      // 精读入口对每篇论文都渲染,路由表里少了它,router-link 解析时会炸
+      { path: '/papers/:paperId/reading', name: 'reading', component: { render: () => h('div', 'reading') } },
     ],
   })
   const host = document.createElement('div')
@@ -96,6 +98,21 @@ describe('RecommendView', () => {
     // 推荐理由是这一页最该被看见的东西
     expect(host.querySelector('.reason').textContent).toContain('命中你的兴趣「推荐系统」')
     expect(host.querySelector('.paper-row__meta').textContent).toContain('NeurIPS')
+  })
+
+  it('没有 arXiv 编号的推荐也给入口,文案是「找可读版本」', async () => {
+    fetchRecommendations.mockResolvedValue(response({
+      recommendations: [
+        recommendation({ ...PAPER, arxivId: '2502.19271' }),
+        recommendation({ ...PAPER, id: 12, title: '第二篇' }),
+      ],
+    }))
+
+    const { host } = await mountView()
+
+    const labels = Array.from(host.querySelectorAll('.paper-row__actions a.link'))
+      .map((node) => node.textContent.trim())
+    expect(labels).toEqual(['精读', '找可读版本'])
   })
 
   it('顶部说明基于几个兴趣标签、候选来自哪里', async () => {

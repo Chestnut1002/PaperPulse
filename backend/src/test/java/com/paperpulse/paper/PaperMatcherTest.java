@@ -191,4 +191,73 @@ class PaperMatcherTest {
             assertThat(PaperMatcher.matches(null, authors, year, null, authors, year)).isFalse();
         }
     }
+
+    @Nested
+    @DisplayName("反查时的退让规则:只凭标题")
+    class MatchesByTitleAlone {
+
+        /** 实测(2026-10-01)那条 Crossref 记录:作者与年份都是空的 */
+        private final String title = "Polymer-Agent: Large Language Model Agent for Polymer Design";
+        private final Integer year = 2026;
+
+        @Test
+        void 我们这边无作者无年份时_标题一致就认() {
+            assertThat(PaperMatcher.matchesByTitleAlone(
+                    title, List.of(), null,
+                    title, List.of("Vani Nigam", "Achuth Chandrasekhar"), year)).isTrue();
+        }
+
+        @Test
+        void 有年份就不再退让_回到标准规则() {
+            // 有佐证却不用才是隐患 —— 作者对不上就不该认
+            assertThat(PaperMatcher.matchesByTitleAlone(
+                    title, List.of(), 2026,
+                    title, List.of("Someone Else"), year)).isFalse();
+        }
+
+        @Test
+        void 有作者就不再退让_回到标准规则() {
+            assertThat(PaperMatcher.matchesByTitleAlone(
+                    title, List.of("Wei Li"), null,
+                    title, List.of("Someone Else"), year)).isFalse();
+        }
+
+        @Test
+        void 标题不同就不认() {
+            assertThat(PaperMatcher.matchesByTitleAlone(
+                    title, List.of(), null,
+                    "Something Else Entirely", List.of("Wei Li"), year)).isFalse();
+        }
+
+        @Test
+        void 通用短标题不认() {
+            // 短标题重名是常有的事,只凭它就认定太危险
+            assertThat(PaperMatcher.matchesByTitleAlone(
+                    "Editorial", List.of(), null, "Editorial", List.of("Wei Li"), year)).isFalse();
+            assertThat(PaperMatcher.matchesByTitleAlone(
+                    "Deep Learning Survey", List.of(), null,
+                    "Deep Learning Survey", List.of("Wei Li"), year)).isFalse();
+        }
+
+        @Test
+        void 刚好四个词就认() {
+            assertThat(PaperMatcher.matchesByTitleAlone(
+                    "Learning to Rank Papers", List.of(), null,
+                    "Learning to Rank Papers", List.of("Wei Li"), year)).isTrue();
+        }
+
+        @Test
+        void 版本后缀与HTML标签仍由归一化抹平() {
+            assertThat(PaperMatcher.matchesByTitleAlone(
+                    title, List.of(), null,
+                    "<i>Polymer-Agent</i>: Large Language Model Agent for Polymer Design (Extended Version)",
+                    List.of("Wei Li"), year)).isTrue();
+        }
+
+        @Test
+        void 标题为空时不认() {
+            assertThat(PaperMatcher.matchesByTitleAlone(
+                    null, List.of(), null, null, List.of("Wei Li"), year)).isFalse();
+        }
+    }
 }

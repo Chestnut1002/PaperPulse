@@ -302,6 +302,99 @@ class TestFetchArxivById:
         assert sources.fetch_arxiv_by_id("2502.19271") is None
 
 
+EMPTY_FEED = ('<?xml version="1.0" encoding="UTF-8"?>'
+              '<feed xmlns="http://www.w3.org/2005/Atom"></feed>')
+
+
+class TestSearchArxivByTitle:
+    """按标题反查预印本(REQ-003 P3)。用在"这篇没有 arXiv 编号"那条路上。不联网。"""
+
+    def fake_feed(self, monkeypatch, feeds):
+        """按调用次序返回预设 feed,并记录每次发出的 search_query。
+
+        记录查询本身和记录结果一样重要 —— 查询拼错的后果是"静默搜成别的",
+        只看结果空不空是发现不了的。
+        """
+        queries = []
+
+        def fetch_text(url, params, source_label):
+            queries.append(params["search_query"])
+            return feeds[min(len(queries) - 1, len(feeds) - 1)]
+
+        monkeypatch.setattr(sources, "_fetch_text", fetch_text)
+        return queries
+
+    def test_短语命中就用它_不再发第二次查询(self, monkeypatch):
+        queries = self.fake_feed(monkeypatch, [FOUND_FEED])
+
+        papers = sources.search_arxiv_by_title("A Paper About Things")
+
+        assert [p["title"] for p in papers] == ["A Paper About Things"]
+        assert queries == ['ti:"A Paper About Things"']
+
+    def test_候选带着可精读的编号(self, monkeypatch):
+        # 复用 arxiv_to_paper 的映射:编号要剥掉版本号,否则每次修订落成新的一行
+        self.fake_feed(monkeypatch, [FOUND_FEED])
+
+        papers = sources.search_arxiv_by_title("A Paper About Things")
+
+        assert papers[0]["arxivId"] == "2502.19271"
+        assert papers[0]["source"] == "arxiv"
+
+    def test_短语落空时退化为显著词查询(self, monkeypatch):
+        # 实测:标题措辞差一个内容词,短语就是 0 条 —— 不退化的话一半场景救不回来
+        queries = self.fake_feed(monkeypatch, [EMPTY_FEED, FOUND_FEED])
+
+        papers = sources.search_arxiv_by_title("A Paper About Things")
+
+        assert papers != []
+        assert queries[0] == 'ti:"A Paper About Things"'
+        assert queries[1] == "ti:Paper AND ti:About AND ti:Things"
+
+    def test_两次都空返回空列表而不是报错(self, monkeypatch):
+        # "arXiv 上确实没有"是正常结果,调用方按空列表给一句人话
+        queries = self.fake_feed(monkeypatch, [EMPTY_FEED])
+
+        assert sources.search_arxiv_by_title("Zzz Nonexistent Paper") == []
+        assert len(queries) == 2
+
+    def test_标题里的与号和引号被剔除(self, monkeypatch):
+        # **实测非得剔不可**:arXiv 遇到 `&` 不报错,而是静默改写成
+        # `ti:a & b` → `ti:a OR all:b` —— 搜出来的是完全不相干的东西
+        queries = self.fake_feed(monkeypatch, [FOUND_FEED])
+
+        sources.search_arxiv_by_title('Explainable Models & iContracts "quoted"')
+
+        assert queries[0] == 'ti:"Explainable Models iContracts quoted"'
+
+    def test_退化查询丢掉虚词与短词(self, monkeypatch):
+        queries = self.fake_feed(monkeypatch, [EMPTY_FEED, FOUND_FEED])
+
+        sources.search_arxiv_by_title("A Study of the Model for Things")
+
+        assert queries[1] == "ti:Study AND ti:Model AND ti:Things"
+
+    def test_超长标题只保留最长的几个词(self, monkeypatch):
+        queries = self.fake_feed(monkeypatch, [EMPTY_FEED, FOUND_FEED])
+        title = ("Recommender Systems convolutional transformer attention embedding "
+                 "personalization evaluation networks benchmark")
+
+        sources.search_arxiv_by_title(title)
+
+        words = queries[1].split(" AND ")
+        assert len(words) == 8
+        # 被丢掉的应当是短词,而不是任意 8 个
+        assert "ti:Systems" not in words and "ti:networks" not in words
+        assert "ti:personalization" in words and "ti:convolutional" in words
+
+    def test_全是虚词的标题只有短语查询可用(self, monkeypatch):
+        # 退化查询拼出来是空串 —— 不能再发一次空查询,那等于把 arXiv 全库捞回来
+        queries = self.fake_feed(monkeypatch, [EMPTY_FEED])
+
+        assert sources.search_arxiv_by_title("The And Of") == []
+        assert queries == ['ti:"The And Of"']
+
+
 class TestCleanText:
     def test_空值返回_None(self):
         # 空串进库比 null 更麻烦,统一成 None

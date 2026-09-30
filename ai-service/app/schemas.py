@@ -152,3 +152,21 @@ class ArxivLookupResponse(BaseModel):
 
     found: bool
     paper: Paper | None = None
+
+
+class ArxivTitleLookupRequest(BaseModel):
+    """按标题找 arXiv 上的预印本。"""
+
+    title: str = Field(min_length=2, max_length=512)
+
+
+class ArxivTitleLookupResponse(BaseModel):
+    """候选列表。
+
+    <p>**返回列表而不是"找到的那一篇"**:判"是不是同一篇"的规则(标题 + 作者 + 年份)
+    在 Java 侧的 `PaperMatcher` 里 —— 这里不重写第二套,只把 arXiv 给的候选原样交出去。
+
+    <p>**空列表是正常结果**:arXiv 上确实没有这篇的预印本,不是错误。
+    """
+
+    candidates: list[Paper] = Field(default_factory=list)

@@ -40,6 +40,19 @@ public class ReadingController {
     }
 
     /**
+     * 给一篇没有 arXiv 编号的论文按标题反查预印本。
+     *
+     * <p>用在精读页的"读不了"面板上:查到就把编号补进这一行(此后所有人都受益),
+     * 这篇从此能精读;查不到返回 404 —— 这是"这篇在 arXiv 上没有预印本",
+     * 是资源的性质,不是服务出错。
+     */
+    @PostMapping("/api/papers/{paperId}/arxiv-lookup")
+    public PaperResponse resolveArxiv(@AuthenticationPrincipal Long userId,
+                                      @PathVariable Long paperId) {
+        return readingService.resolveArxiv(userId, paperId);
+    }
+
+    /**
      * 粘贴 arXiv 编号或链接,直接打开这篇论文。
      *
      * <p>精读是这个项目的主功能,而"手里已经有一篇论文想读它"是最自然的入口 ——

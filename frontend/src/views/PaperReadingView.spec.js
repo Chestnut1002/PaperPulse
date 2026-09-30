@@ -3,10 +3,14 @@ import { createApp, h } from 'vue'
 import { createMemoryHistory, createRouter, RouterView } from 'vue-router'
 
 import PaperReadingView from './PaperReadingView.vue'
-import { askQuestion, fetchPaper } from '../api/reading'
+import { askQuestion, fetchPaper, resolveArxiv } from '../api/reading'
 import { flush, waitFor } from '../test/flush'
 
-vi.mock('../api/reading', () => ({ fetchPaper: vi.fn(), askQuestion: vi.fn() }))
+vi.mock('../api/reading', () => ({
+  fetchPaper: vi.fn(),
+  askQuestion: vi.fn(),
+  resolveArxiv: vi.fn(),
+}))
 
 const PAPER = {
   id: 11,
@@ -55,11 +59,18 @@ function ask(host, text) {
   })
 }
 
+function clickFind(host) {
+  host.querySelector('.unavailable .el-button').dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  return flush()
+}
+
 describe('PaperReadingView', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     fetchPaper.mockResolvedValue(PAPER)
     askQuestion.mockResolvedValue(ANSWER)
+    // 每个用例都重设一次:clearAllMocks 不会清掉上一个用例留下的实现
+    resolveArxiv.mockResolvedValue({ ...PAPER, arxivId: '2002.02126' })
   })
 
   it('显示论文标题与元信息', async () => {
@@ -77,6 +88,53 @@ describe('PaperReadingView', () => {
     expect(host.querySelector('.unavailable').textContent).toContain('没有可精读的全文')
     // 不给输入框 —— 免得用户白问一场
     expect(host.querySelector('input')).toBeNull()
+  })
+
+  it('没有全文时给一个「在 arXiv 上找找看」的按钮,而不是一条死路', async () => {
+    fetchPaper.mockResolvedValue({ ...PAPER, arxivId: null })
+
+    const { host } = await mountView()
+
+    expect(host.querySelector('.unavailable .el-button').textContent).toContain('在 arXiv 上找找看')
+  })
+
+  it('找到预印本后当场就能提问,不用刷新页面', async () => {
+    fetchPaper.mockResolvedValue({ ...PAPER, arxivId: null })
+
+    const { host } = await mountView()
+    await clickFind(host)
+
+    expect(resolveArxiv).toHaveBeenCalledWith('11')
+    // 拿到编号后问答界面出现,并且说明是刚找到的
+    expect(host.querySelector('.unavailable')).toBeNull()
+    expect(host.querySelector('.found').textContent).toContain('找到')
+    expect(host.querySelector('input')).not.toBeNull()
+  })
+
+  it('arXiv 上没有预印本时说清是没找到,而不是报错', async () => {
+    fetchPaper.mockResolvedValue({ ...PAPER, arxivId: null })
+    resolveArxiv.mockRejectedValue(
+      Object.assign(new Error('arXiv 上没有找到这篇论文的预印本'), { status: 404 }),
+    )
+
+    const { host } = await mountView()
+    await clickFind(host)
+
+    // 原样呈现服务端那句话;仍然留在"读不了"这一屏,原文链接还在
+    expect(host.querySelector('.unavailable__note').textContent).toContain('没有找到')
+    expect(host.querySelector('.unavailable')).not.toBeNull()
+  })
+
+  it('反查本身出错时给提示,而不是装作没找到', async () => {
+    fetchPaper.mockResolvedValue({ ...PAPER, arxivId: null })
+    resolveArxiv.mockRejectedValue(
+      Object.assign(new Error('精读服务不可用,请确认 ai-service 已启动'), { status: 503 }),
+    )
+
+    const { host } = await mountView()
+    await clickFind(host)
+
+    expect(host.querySelector('.alert').textContent).toContain('精读服务不可用')
   })
 
   it('开始前给几个例子', async () => {
