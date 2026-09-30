@@ -48,14 +48,32 @@ mvn spring-boot:run          # http://localhost:8080
 数据库密码等本机凭据放在 `backend/src/main/resources/application-local.yml`(已被 `.gitignore` 忽略)。
 从 `application.yml` 可以看到全部可配置项及其环境变量名,也可用环境变量覆盖(如 `DB_PASSWORD`)。
 
-### 3. AI 服务
+**`JWT_SECRET` 是必填的,且仓库里没有默认值** —— 未配置时后端会拒绝启动并说明原因:
+
+```bash
+openssl rand -base64 48      # 生成一个,填进 application-local.yml 的 jwt.secret 或环境变量
+```
+
+> 之所以不给默认值:JWT 的签名密钥一旦随仓库公开,**任何人都能签发一个冒充任意用户的 token**。
+> 默认值会把「忘了配置」变成「无声地用一个公开密钥运行」,而校验把它变成一眼可见的启动错误。
+
+### 3. 启用提交前钩子(每个克隆各做一次)
+
+```bash
+git config core.hooksPath .githooks
+```
+
+钩子会在提交前扫描**新增的行**,发现私钥头、常见令牌前缀、或"名字像凭据却写着字面量"的赋值时拒绝提交。
+`${VAR}` / `getenv(...)` 这类引用不会被拦(引用不泄露东西) —— 误报太多的话,钩子最后一定会被 `--no-verify` 绕过。
+
+### 4. AI 服务
 
 ```bash
 cd ai-service
 .venv/Scripts/python -m uvicorn app.main:app --port 8000
 ```
 
-### 4. 前端
+### 5. 前端
 
 ```bash
 cd frontend

@@ -25,8 +25,13 @@ server:
   port: ${BACKEND_PORT:8080}
 
 jwt:
-  # 生产环境必须通过环境变量注入,默认值仅供本机开发
-  secret: ${JWT_SECRET:paperpulse-local-dev-secret-key-change-me-in-production-please}
+  # **必填,且仓库里不提供默认值。**
+  # 此前这里写过一个"仅供本机开发"的回退值,它随仓库一起公开了 —— 而 JWT 的签名密钥
+  # 一旦公开,读过仓库的人就能签出任意用户的 token。默认值的真正问题不是"值弱",
+  # 而是它把"忘记配置"变成了"静默地用一个公开密钥运行",没有任何迹象。
+  # 现在未配置时应用直接拒绝启动(校验在 JwtProperties),把一个静默的安全问题
+  # 变成一个一眼可见的启动错误。
+  secret: ${JWT_SECRET:}
   # token 有效期(秒),默认 24 小时
   expiration-seconds: ${JWT_EXPIRATION:86400}
 

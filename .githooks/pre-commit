@@ -1,0 +1,49 @@
+#!/bin/sh
+# PaperPulse 提交前钩子:拦下混入凭据的提交。
+#
+# 启用(每个克隆各做一次):
+#     git config core.hooksPath .githooks
+#
+# 三条规定,都是为了"让钩子活得下去":
+#   1. 只看本次**新增或修改**的行 —— 扫全量的话,历史存量会让每次提交都报错,
+#      结果是人人 --no-verify,钩子等于不存在。存量得靠单独的全库扫描。
+#   2. 只看**写死的字面量**,放过 ${VAR} / getenv(...) 这类**引用** ——
+#      引用不泄露任何东西。误报少,才有人愿意留着它。
+#   3. src/test/ 下只查令牌和私钥,不查口令字面量 —— 测试夹具里给假用户写一个
+#      假口令常量是正常写法,为它天天报错只会把人赶走。
+#
+# 注意这段注释本身也受检:写示例时别写出真实形状的赋值,否则钩子会拦下自己。
+#
+# 某行确实无害时,在该行加注释 allow-secret 即可放行。
+
+TOKEN_RE='-----BEGIN [A-Z ]*PRIVATE KEY-----|(^|[^A-Za-z0-9])(sk-[A-Za-z0-9]{16,}|ghp_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|AKIA[0-9A-Z]{16}|xox[baprs]-[A-Za-z0-9-]{10,})'
+LITERAL_RE='(password|passwd|secret|api[_-]?key|access[_-]?key|auth[_-]?token|private[_-]?key)[A-Za-z_]*[[:space:]]*[:=][[:space:]]*"?[^[:space:]"#]{6,}'
+SAFE_RE='\$\{|getenv|os\.environ|process\.env|System\.getenv|ENV\[|<[^>]+>|placeholder|change-me|change_me|your-|your_|example|xxxx|\*\*\*'
+
+findings=$(
+    git diff --cached --name-only --diff-filter=ACMR | while IFS= read -r file; do
+        [ -z "$file" ] && continue
+        added=$(git diff --cached --no-color -U0 -- "$file" \
+                | grep '^+' | grep -v '^+++' | grep -v 'allow-secret')
+        [ -z "$added" ] && continue
+
+        # 令牌与私钥:任何文件、任何位置都拦
+        printf '%s\n' "$added" | grep -nE -- "$TOKEN_RE" | sed "s|^|令牌/私钥  $file:|"
+
+        # 写死的口令或密钥:测试夹具豁免
+        case "$file" in
+            */src/test/*) ;;
+            *) printf '%s\n' "$added" | grep -inE -- "$LITERAL_RE" \
+                   | grep -vE -- "$SAFE_RE" | sed "s|^|写死的凭据  $file:|" ;;
+        esac
+    done
+)
+
+if [ -n "$findings" ]; then
+    printf '\n\033[31m提交被拒:新增内容里检测到疑似凭据\033[0m\n\n' >&2
+    printf '%s\n' "$findings" >&2
+    printf '\n确认无害就在该行加注释 allow-secret;真正的凭据请改用环境变量注入。\n\n' >&2
+    exit 1
+fi
+
+exit 0

@@ -1,0 +1,7 @@
+# 钩子是 shell 脚本,必须保持 LF:Windows 上 core.autocrlf=true 会把它签出成 CRLF,
+# 那样 `#!/bin/sh<CR>` 就不是有效的 shebang,钩子会静默失效 —— 而"静默失效"正是
+# 它要防的那类问题,不能发生在它自己身上。
+/.githooks/** text eol=lf
+
+# 其余文本文件交给 Git 按平台自动处理。
+* text=auto

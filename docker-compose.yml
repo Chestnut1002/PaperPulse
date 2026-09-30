@@ -4,11 +4,15 @@ services:
     container_name: paperpulse-mysql
     restart: unless-stopped
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:-paperpulse123}
+      # `:?` 让 compose 在变量未设置时**直接拒绝启动**并打印这句话。
+      # 此前用 `:-某个写死的口令` 作默认值,那个口令随仓库公开了 ——
+      # 谁照着仓库跑起这个容器,谁的数据库就有一个公开的 root 口令。
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?未设置。请在 .env 里填一个自己生成的口令,不要用默认值}
       MYSQL_DATABASE: paperpulse
       TZ: Asia/Shanghai
     ports:
-      - "3306:3306"
+      # 只绑本机回环地址:MySQL 没有理由对局域网开放
+      - "127.0.0.1:3306:3306"
     volumes:
       - mysql-data:/var/lib/mysql
     command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
