@@ -369,6 +369,31 @@ def search_arxiv(keywords: str, limit: int,
                     year_from, year_to)
 
 
+def fetch_arxiv_by_id(arxiv_id: str) -> dict | None:
+    """按编号取一篇 arXiv 论文的元数据;取不到返回 None。
+
+    <p>用在"直接粘贴 arXiv 编号精读"那条路上 —— 用户手里有编号,不必先搜一遍。
+
+    <p><b>要防一手 arXiv 的"错误条目"</b>:编号不存在时它照样返回 200,条目里放的是一篇
+    标题为 `Error` 的假论文。不识别它的话,用户会得到一篇叫 "Error" 的论文。
+    """
+    text = _fetch_text(ARXIV_API, {"id_list": arxiv_id, "max_results": 1}, "arXiv")
+    try:
+        root = ET.fromstring(text)
+    except ET.ParseError as exc:
+        raise RuntimeError(f"arXiv 返回的不是合法 XML:{exc}") from exc
+
+    entries = root.findall(f"{ATOM}entry")
+    if not entries:
+        return None
+
+    entry = entries[0]
+    # arXiv 的"没找到"不是报错,而是给一个标题为 Error 的条目
+    if _clean_text(entry.findtext(f"{ATOM}title")) == "Error":
+        return None
+    return arxiv_to_paper(entry)
+
+
 SOURCES: list[Source] = [
     # 顺序 = 结果列表里的交织顺序。按"元数据丰富度"排,失败的自然被跳过,
     # 所以 S2 限流时 arXiv 会顶到最前面,不需要另写降级逻辑。

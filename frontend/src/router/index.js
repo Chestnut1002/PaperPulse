@@ -17,6 +17,13 @@ const routes = [
         component: () => import('../views/OverviewView.vue'),
         meta: { navLabel: '首页' },
       },
+      // 精读是主功能,给它一个独立入口 —— 用户往往手里已经有一篇想读的论文
+      {
+        path: 'reading',
+        name: 'reading-entry',
+        component: () => import('../views/ReadingEntryView.vue'),
+        meta: { navLabel: '精读' },
+      },
       {
         path: 'recommendations',
         name: 'recommendations',

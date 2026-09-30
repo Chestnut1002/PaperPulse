@@ -4,6 +4,16 @@ import { client } from './client'
 export const fetchPaper = (paperId) => client.get(`/papers/${paperId}`)
 
 /**
+ * 粘贴 arXiv 编号或链接,直接打开这篇论文。
+ *
+ * **解析在后端做** —— 用户贴的可能是编号、链接、或夹着编号的一句话,
+ * 这套规则只该有一份,不该前端再写一遍。
+ *
+ * @param reference 用户粘贴的内容
+ */
+export const openByArxiv = (reference) => client.post('/papers/from-arxiv', { reference })
+
+/**
  * 就一篇论文提问。
  *
  * <p>对话历史由前端带上,后端与 ai-service 都不维持会话状态。

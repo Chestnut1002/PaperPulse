@@ -92,6 +92,30 @@ def _is_paragraph(tag) -> bool:
     return _has_class(tag, "ltx_p")
 
 
+def _inline_latex(soup: BeautifulSoup) -> None:
+    """把每个公式元素换成它的 **LaTeX 源码**。
+
+    <p><b>不这么做的话公式是乱码 —— 而且是因为我们抽了两遍。</b>
+    arXiv 的 HTML 里每个 `<math>` 都带一个 `application/x-tex` 注解,通用文本抽取会把
+    「渲染出来的符号」和「LaTeX 源码」**两份都拿到**,粘在一起:
+
+    <pre>v ∈ V v\\in V        ← 现在抽出来的是这个</pre>
+
+    只取注解里的源码,就得到干净可读的:
+
+    <pre>$v\\in V$</pre>
+
+    <p>实测四篇论文(含 2017 年的)共 1569 个公式,**一个不缺**都带源码。
+    所以这不是碰运气 —— 是 arXiv HTML 的固定特性。极少数没有注解的保留原样,交给文本抽取。
+    """
+    for math in soup.find_all("math"):
+        annotation = math.find("annotation", attrs={"encoding": "application/x-tex"})
+        if annotation is None:
+            continue
+        # 包一层 $…$:让模型看得出这是数学而不是普通文字
+        math.replace_with(f" ${annotation.get_text().strip()}$ ")
+
+
 def parse(arxiv_id: str, html: str) -> FullText:
     """把 arXiv 的 HTML 拆成有序的节。
 
@@ -101,6 +125,8 @@ def parse(arxiv_id: str, html: str) -> FullText:
     soup = BeautifulSoup(html, "html.parser")
     for tag in soup(["script", "style", "nav", "footer"]):
         tag.decompose()
+    # 公式必须先处理:要赶在文本抽取之前换成源码
+    _inline_latex(soup)
 
     title_tag = soup.find("h1", class_="ltx_title_document")
     title = title_tag.get_text(" ", strip=True) if title_tag else "(无标题)"

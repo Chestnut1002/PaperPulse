@@ -13,6 +13,8 @@ from .llm import LlmError
 from .reading.fulltext import FullTextStore, FullTextUnavailable
 from .reading.qa import ContextTooLong, ask
 from .schemas import (
+    ArxivLookupRequest,
+    ArxivLookupResponse,
     CandidateRequest,
     CandidateResponse,
     Citation,
@@ -21,7 +23,7 @@ from .schemas import (
     SearchRequest,
     SearchResponse,
 )
-from .sources import AllSourcesFailed, find_candidates, search_papers
+from .sources import AllSourcesFailed, fetch_arxiv_by_id, find_candidates, search_papers
 
 # 全文缓存在服务启动时建一次,进程内复用
 _full_text_store = FullTextStore(config.FULLTEXT_CACHE_DIR)
@@ -91,6 +93,23 @@ def recommend_candidates(payload: CandidateRequest) -> CandidateResponse:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
     return CandidateResponse(sourceLabel="、".join(labels), papers=papers)
+
+
+@app.post("/lookup/arxiv", response_model=ArxivLookupResponse)
+def lookup_arxiv(payload: ArxivLookupRequest) -> ArxivLookupResponse:
+    """按编号取一篇 arXiv 论文的元数据。
+
+    <p>用在"我手里有一篇论文想读"那条路上 —— 用户不必先搜一遍。
+    元数据拿回来后由 Java 侧落库,再进精读。
+    """
+    try:
+        paper = fetch_arxiv_by_id(payload.arxivId)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=503, detail=f"取 arXiv 元数据失败:{exc}") from exc
+
+    # 编号不存在时返回 found=false,而不是 404 —— 写错编号是常见情况,
+    # 调用方据此给一句人话即可,没必要把它当异常
+    return ArxivLookupResponse(found=paper is not None, paper=paper)
 
 
 @app.post("/qa", response_model=QaResponse)

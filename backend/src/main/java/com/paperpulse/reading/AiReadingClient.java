@@ -1,6 +1,7 @@
 package com.paperpulse.reading;
 
 import com.paperpulse.common.ApiException;
+import com.paperpulse.reading.dto.AiArxivLookupResponse;
 import com.paperpulse.reading.dto.QaResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -37,6 +38,28 @@ public class AiReadingClient {
                     .body(Map.of("arxivId", arxivId, "question", question, "history", history))
                     .retrieve()
                     .body(QaResponse.class);
+
+            if (response == null) {
+                throw ApiException.badGateway("精读服务返回了空响应");
+            }
+            return response;
+        } catch (RestClientResponseException ex) {
+            throw mapUpstreamError(ex);
+        } catch (RestClientException ex) {
+            log.warn("连接 ai-service 失败", ex);
+            throw ApiException.serviceUnavailable("精读服务不可用,请确认 ai-service 已启动");
+        }
+    }
+
+    /** 按编号取一篇 arXiv 论文的元数据。 */
+    public AiArxivLookupResponse lookupArxiv(String arxivId) {
+        try {
+            AiArxivLookupResponse response = restClient.post()
+                    .uri("/lookup/arxiv")
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("arxivId", arxivId))
+                    .retrieve()
+                    .body(AiArxivLookupResponse.class);
 
             if (response == null) {
                 throw ApiException.badGateway("精读服务返回了空响应");

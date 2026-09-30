@@ -3,6 +3,9 @@ package com.paperpulse.reading;
 import com.paperpulse.common.ApiException;
 import com.paperpulse.paper.Paper;
 import com.paperpulse.paper.PaperService;
+import com.paperpulse.paper.dto.PaperInput;
+import com.paperpulse.paper.dto.PaperResponse;
+import com.paperpulse.reading.dto.AiArxivLookupResponse;
 import com.paperpulse.reading.dto.QaRequest;
 import com.paperpulse.reading.dto.QaResponse;
 import com.paperpulse.user.UserService;
@@ -44,6 +47,34 @@ public class ReadingService {
         }
 
         return aiReadingClient.ask(arxivId, request.question().trim(), turnsOf(request));
+    }
+
+    /**
+     * 按用户粘贴的内容找到一篇论文,落库并返回。
+     *
+     * <p>用在"我手里有一篇论文想读"那条路上 —— 用户不该被迫先搜一遍、还得指望它出现在结果里。
+     * 拿到之后前端直接进精读页。
+     */
+    public PaperResponse openByArxiv(Long userId, String rawReference) {
+        userService.getById(userId);
+
+        String arxivId = ArxivReference.extract(rawReference);
+        if (arxivId == null) {
+            throw ApiException.badRequest(
+                    "没认出 arXiv 编号 —— 可以粘贴编号(如 2502.19271)或 arXiv 的链接");
+        }
+
+        AiArxivLookupResponse found = aiReadingClient.lookupArxiv(arxivId);
+        if (!found.found() || found.paper() == null) {
+            throw ApiException.notFound("arXiv 上找不到这个编号:" + arxivId);
+        }
+
+        AiArxivLookupResponse.Paper paper = found.paper();
+        // 走既有的 resolve:跨来源合并会自动生效(这篇如果已经以别的身份在库里,不会多存一行)
+        return PaperResponse.of(paperService.resolve(new PaperInput(
+                paper.source(), paper.externalId(), paper.doi(), paper.arxivId(),
+                paper.title(), paper.authors(), paper.abstractText(),
+                paper.publicationYear(), paper.venue(), paper.url())));
     }
 
     private static List<Map<String, String>> turnsOf(QaRequest request) {

@@ -1,5 +1,7 @@
 package com.paperpulse.reading;
 
+import com.paperpulse.paper.dto.PaperResponse;
+import com.paperpulse.reading.dto.ArxivOpenRequest;
 import com.paperpulse.reading.dto.QaRequest;
 import com.paperpulse.reading.dto.QaResponse;
 import jakarta.validation.Valid;
@@ -35,5 +37,19 @@ public class ReadingController {
                           @PathVariable Long paperId,
                           @Valid @RequestBody QaRequest request) {
         return readingService.ask(userId, paperId, request);
+    }
+
+    /**
+     * 粘贴 arXiv 编号或链接,直接打开这篇论文。
+     *
+     * <p>精读是这个项目的主功能,而"手里已经有一篇论文想读它"是最自然的入口 ——
+     * 不该要求用户先去搜一遍、还得指望它出现在结果里。
+     *
+     * <p>返回落库后的论文(带本地 id),前端拿它进精读页。
+     */
+    @PostMapping("/api/papers/from-arxiv")
+    public PaperResponse openFromArxiv(@AuthenticationPrincipal Long userId,
+                                       @Valid @RequestBody ArxivOpenRequest request) {
+        return readingService.openByArxiv(userId, request.reference());
     }
 }

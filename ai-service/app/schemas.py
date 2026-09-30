@@ -135,3 +135,20 @@ class QaResponse(BaseModel):
     omittedTurns: int = Field(
         default=0, description="因为超出上下文预算被丢掉的旧轮次数。丢的时候要让用户知道"
     )
+
+
+class ArxivLookupRequest(BaseModel):
+    """按编号取论文元数据。"""
+
+    arxivId: str = Field(min_length=3, max_length=64)
+
+
+class ArxivLookupResponse(BaseModel):
+    """取到的论文;`found` 为 false 时 `paper` 为 null。
+
+    <p>**用 found 而不是 404**:编号写错了是常见情况,调用方据此给一句人话,
+    不必把"没找到"当异常处理。
+    """
+
+    found: bool
+    paper: Paper | None = None

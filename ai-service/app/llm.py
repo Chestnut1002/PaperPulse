@@ -17,12 +17,15 @@ _RETRIES = 2
 _RETRY_WAIT_SECONDS = 2.0
 _TIMEOUT_SECONDS = 90
 
+# 单次回答的输出上限。**必须显式设**:不设的话是服务端的默认值,而长回答会被它从中间截断。
+_MAX_OUTPUT_TOKENS = 4096
+
 
 class LlmError(RuntimeError):
     """调用大模型失败。调用方据此返回 502,而不是把异常漏成 500。"""
 
 
-def _post_with_retry(system_prompt: str, user_prompt: str) -> httpx.Response:
+def _post_with_retry(system_prompt: str, user_prompt: str, json_mode: bool) -> httpx.Response:
     """发一次请求;**上游抖动就重试一次**。
 
     <p>实测大模型会偶发失败(同一次提问,前一次 502、后一次正常)。
@@ -43,7 +46,8 @@ def _post_with_retry(system_prompt: str, user_prompt: str) -> httpx.Response:
                         {"role": "system", "content": system_prompt},
                         {"role": "user", "content": user_prompt},
                     ],
-                    "response_format": {"type": "json_object"},
+                    **({"response_format": {"type": "json_object"}} if json_mode else {}),
+                    "max_tokens": _MAX_OUTPUT_TOKENS,
                     # 拆解查询是抽取任务,不是创作任务 —— 温度调到 0,同样的输入给同样的结果
                     "temperature": 0.0,
                 },
@@ -74,14 +78,37 @@ def chat_json(system_prompt: str, user_prompt: str) -> dict:
     if not config.DEEPSEEK_API_KEY:
         raise LlmError("未配置 DEEPSEEK_API_KEY,请检查 ai-service/.env")
 
-    response = _post_with_retry(system_prompt, user_prompt)
+    response = _post_with_retry(system_prompt, user_prompt, json_mode=True)
 
+    content = _content_of(response)
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError as exc:
+        raise LlmError(f"大模型没有返回合法 JSON:{content[:200]}") from exc
+
+
+def chat_text(system_prompt: str, user_prompt: str) -> str:
+    """让模型自由回答,返回纯文本。
+
+    <p><b>问答刻意不用 {@link chat_json}</b>:把长回答塞进 JSON 字符串里,一旦达到输出上限,
+    字符串就会被**从中间截断**成一个非法 JSON —— 整次调用报废。
+    纯文本答到一半只是短一点,**失败得温和**。
+
+    <p>这不是假想的风险:实测问《Attention Is All You Need》"核心贡献是什么",
+    答案长到被截断,JSON 解析直接失败。
+
+    <p>需要结构化输出的地方(查询拆解)仍然用 chat_json。
+    """
+    return _content_of(_post_with_retry(system_prompt, user_prompt, json_mode=False))
+
+
+def _content_of(response: httpx.Response) -> str:
     try:
         content = response.json()["choices"][0]["message"]["content"]
     except (KeyError, IndexError, ValueError) as exc:
         raise LlmError(f"大模型响应格式异常:{response.text[:200]}") from exc
 
-    try:
-        return json.loads(content)
-    except json.JSONDecodeError as exc:
-        raise LlmError(f"大模型没有返回合法 JSON:{content[:200]}") from exc
+    text = (content or "").strip()
+    if not text:
+        raise LlmError("大模型返回了空回答")
+    return text

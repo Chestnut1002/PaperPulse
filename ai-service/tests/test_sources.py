@@ -255,6 +255,53 @@ class TestFindCandidates:
         assert sources.find_candidates([], per_query=5) == ([], [])
 
 
+FOUND_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <entry>
+    <id>http://arxiv.org/abs/2502.19271v1</id>
+    <published>2025-02-26T00:00:00Z</published>
+    <title>A Paper About Things</title>
+    <summary>Abstract text.</summary>
+    <author><name>Alice</name></author>
+  </entry>
+</feed>"""
+
+# arXiv 对不存在的编号**不报错**,而是返回一个标题为 Error 的条目
+ERROR_FEED = """<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <entry>
+    <id>http://arxiv.org/api/errors#incorrect_id_format_for_123</id>
+    <title>Error</title>
+    <summary>incorrect id format for 123</summary>
+  </entry>
+</feed>"""
+
+
+class TestFetchArxivById:
+    """按编号取元数据。用在"直接粘贴 arXiv 编号精读"那条路上。"""
+
+    def test_取到论文(self, monkeypatch):
+        monkeypatch.setattr(sources, "_fetch_text", lambda *a, **k: FOUND_FEED)
+
+        paper = sources.fetch_arxiv_by_id("2502.19271")
+
+        assert paper["arxivId"] == "2502.19271"
+        assert paper["title"] == "A Paper About Things"
+        assert paper["source"] == "arxiv"
+
+    def test_编号不存在时返回_None_而不是一篇叫_Error_的论文(self, monkeypatch):
+        # 不识别这个的话,用户会得到一篇标题为 "Error" 的论文
+        monkeypatch.setattr(sources, "_fetch_text", lambda *a, **k: ERROR_FEED)
+
+        assert sources.fetch_arxiv_by_id("123") is None
+
+    def test_没有条目时返回_None(self, monkeypatch):
+        monkeypatch.setattr(sources, "_fetch_text",
+                            lambda *a, **k: '<feed xmlns="http://www.w3.org/2005/Atom"></feed>')
+
+        assert sources.fetch_arxiv_by_id("2502.19271") is None
+
+
 class TestCleanText:
     def test_空值返回_None(self):
         # 空串进库比 null 更麻烦,统一成 None

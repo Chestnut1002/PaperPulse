@@ -22,6 +22,14 @@ HTML = """
   <section class="ltx_section">
     <h2 class="ltx_title ltx_title_section">2 Method</h2>
     <p class="ltx_p">方法部分的正文,描述了这个方法大概是怎么做的,略。</p>
+    <p class="ltx_p">下面的公式展示了核心定义:
+      <math display="inline">
+        <semantics>
+          <mrow><mi>v</mi><mo>∈</mo><mi>V</mi></mrow>
+          <annotation encoding="application/x-tex">v\\in V</annotation>
+        </semantics>
+      </math>
+      其中 V 是节点集合。</p>
   </section>
   <section class="ltx_bibliography">
     <h2 class="ltx_title ltx_title_bibliography">References</h2>
@@ -60,6 +68,22 @@ class TestParse:
 
         assert "导航栏" not in joined
         assert "页脚" not in joined
+
+    def test_公式只取_LaTeX_源码(self):
+        # 不这么做的话,通用文本抽取会把「渲染出来的符号」和「LaTeX 源码」两份都拿到,
+        # 粘在一起成了 "v ∈ V v\in V" —— 公式看起来就是乱码
+        joined = parse("2502.00001", HTML).to_prompt()
+
+        assert "$v\\in V$" in joined
+        assert "∈" not in joined, "渲染出来的符号不该同时留下"
+
+    def test_没有源码的公式保留原样而不是丢掉(self):
+        # 极少数公式没有 x-tex 注解 —— 丢掉它会让正文出现空缺,保留原样更好
+        html = HTML.replace(
+            '<annotation encoding="application/x-tex">v\\in V</annotation>', ""
+        )
+
+        assert "∈" in parse("2502.00001", html).to_prompt()
 
     def test_节号从1开始且连续(self):
         full_text = parse("2502.00001", HTML)
@@ -143,21 +167,24 @@ class TestTrimHistory:
 
 
 class TestCitedIndexes:
-    def test_只保留真实存在的节号(self):
-        full_text = full_text_with(3)
+    """节号从回答里的 [[§n]] 标记读出来 —— 不让模型另报一份,两处信息对不上时说不清谁对。"""
 
+    def test_从标记里取出节号(self):
+        assert _cited_indexes("论文提出了 [[§1]] 这个方法,见 [[§3]]", full_text_with(5)) == (1, 3)
+
+    def test_只保留真实存在的节号(self):
         # 模型编出一个不存在的节号是常见的事 —— 丢掉它,而不是猜它想指哪一节
-        assert _cited_indexes({"sections": [1, 99, 3]}, full_text) == (1, 3)
+        assert _cited_indexes("见 [[§1]] 和 [[§99]]", full_text_with(3)) == (1,)
 
     def test_去重并排序(self):
-        assert _cited_indexes({"sections": [3, 1, 3]}, full_text_with(5)) == (1, 3)
+        assert _cited_indexes("[[§3]] 里说了,另外 [[§1]] 也说过,[[§3]]", full_text_with(5)) == (1, 3)
 
-    def test_不是数组时给空(self):
-        assert _cited_indexes({"sections": "1,2"}, full_text_with(5)) == ()
-        assert _cited_indexes({}, full_text_with(5)) == ()
+    def test_没有标记时给空(self):
+        assert _cited_indexes("这段回答没有引用任何一节", full_text_with(5)) == ()
 
-    def test_非数字项被跳过(self):
-        assert _cited_indexes({"sections": [1, "x", None, 2]}, full_text_with(5)) == (1, 2)
+    def test_标记格式不对时跳过(self):
+        # [[§x]] 这种不是节号,别当成 0 也别报错
+        assert _cited_indexes("[[§x]] 和 [[§2]]", full_text_with(5)) == (2,)
 
 
 class TestUserPrompt:

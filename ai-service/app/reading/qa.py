@@ -5,10 +5,11 @@ RAG 要引入向量库与切块策略,而单论文场景里"全文都在"比"检
 跨论文检索才需要 RAG。
 """
 
+import re
 from dataclasses import dataclass
 
 from .. import config
-from ..llm import LlmError, chat_json
+from ..llm import chat_text
 from .fulltext import FullText
 
 SYSTEM_PROMPT = """你在帮用户精读一篇论文。用户会就这一篇论文连续提问。
@@ -18,10 +19,12 @@ SYSTEM_PROMPT = """你在帮用户精读一篇论文。用户会就这一篇论�
   不要用你自己的知识补充 —— 用户要的是这篇论文说了什么,不是这个领域一般怎么说。
 - 引用原文时用 [[§n]] 标出依据来自哪一节(n 是节号,原文里每节前面都有 [[§n]] 标记)。
 - 用中文回答,除非用户用英文提问。
-- 输出 json,字段:
-  - answer:回答正文,里面有 [[§n]] 标记
-  - sections:你用到的节号数组,如 [3, 7];一节都没用到就给空数组 []
-只输出 json,不要输出任何解释文字。"""
+
+直接输出回答本身,不要输出 json、不要加任何前缀或后缀。"""
+
+# 回答里的节号标记。**引用是从标记里读出来的,不让模型另报一份** ——
+# 两处信息一旦对不上(比如正文标了 §3 但列表里没写),谁对谁错说不清。
+_MARKER = re.compile(r"\[\[§(\d+)\]\]")
 
 
 class ContextTooLong(RuntimeError):
@@ -54,13 +57,9 @@ def ask(full_text: FullText, question: str, history: list[tuple[str, str]] | Non
         )
 
     kept, omitted = _trim_history(turns, remaining)
-    data = chat_json(SYSTEM_PROMPT, _user_prompt(paper, kept, question))
+    answer = chat_text(SYSTEM_PROMPT, _user_prompt(paper, kept, question))
 
-    answer = str(data.get("answer") or "").strip()
-    if not answer:
-        raise LlmError("模型没有给出回答")
-
-    return QaResult(answer=answer, cited_indexes=_cited_indexes(data, full_text),
+    return QaResult(answer=answer, cited_indexes=_cited_indexes(answer, full_text),
                     omitted_turns=omitted)
 
 
@@ -93,22 +92,15 @@ def _user_prompt(paper: str, turns: list[tuple[str, str]], question: str) -> str
     return "\n".join(parts)
 
 
-def _cited_indexes(data: dict, full_text: FullText) -> tuple[int, ...]:
-    """取出模型回指的节号,**只保留原文里真实存在的那些**。
+def _cited_indexes(answer: str, full_text: FullText) -> tuple[int, ...]:
+    """从回答里的 `[[§n]]` 标记取出引用的节号,**只保留原文里真实存在的那些**。
 
     <p>模型编出一个不存在的节号是常见的事。丢掉它,而不是去猜它想指哪一节 ——
     猜错就等于制造了一条假引用。
     """
-    raw = data.get("sections")
-    if not isinstance(raw, list):
-        return ()
-
     indexes: list[int] = []
-    for item in raw:
-        try:
-            index = int(item)
-        except (TypeError, ValueError):
-            continue
+    for raw in _MARKER.findall(answer):
+        index = int(raw)
         if index not in indexes and full_text.find(index) is not None:
             indexes.append(index)
     return tuple(sorted(indexes))
