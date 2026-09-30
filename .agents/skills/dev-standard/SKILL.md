@@ -1,6 +1,6 @@
 ---
 name: dev-standard
-description: 用户定制的软件工程开发规范(合并《Codex 软件工程开发规范 Prompt》与《AI 项目专用规范》)。凡是要写代码、改代码、加功能、修 bug、提交 Git、开发 AI/LLM 功能时,必须调用本 skill,按工业级流程执行:先出【项目分析报告】,修改前出【代码修改计划】,提交前出【Git提交说明】,并维护 docs/dev-log.md、docs/requirements.md、CHANGELOG.md 与 /experiments/ 记录。
+description: 用户定制的软件工程开发规范(合并《Claude Code 软件工程开发规范 Prompt》与《AI 项目专用规范》)。凡是要写代码、改代码、加功能、修 bug、提交 Git、开发 AI/LLM 功能时,必须调用本 skill,按工业级流程执行:先出【项目分析报告】,修改前出【代码修改计划】,提交前出【Git提交说明】,并维护 docs/dev-log.md、docs/requirements.md、CHANGELOG.md 与 /experiments/ 记录。
 ---
 
 # 软件开发规范 Skill(用户定制)
